@@ -4,7 +4,7 @@ from agent import Agent1D, PPO_Buffer
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter(log_dir="runs/1D_ppo_1")
+writer = SummaryWriter(log_dir="runs/1D_ppo_2")
 
 device = torch.device("cpu")
 if torch.backends.mps.is_available():
@@ -18,11 +18,13 @@ def main_training_loop():
 
     n_agents = 5
     n_observations = 2 # number of chemicals sampled by each agent
-    local_steps = 100 # number of steps before updating the policy
-    n_episodes = 200
-    buffer_size = 100 # size of the buffer for each agent
+    local_steps = 128 # number of steps before updating the policy
+    n_episodes = 2000
+    buffer_size = local_steps # size of the buffer for each agent
     batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
+
+    render = False
 
     env_args = EnvArgs1D(
         n_actors=n_agents,
@@ -40,21 +42,23 @@ def main_training_loop():
 
 
     # # Plotting setup # #
-    # Rewards and Value Estimates
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 6))
-    value_lines = [ax1.plot([], [], color=c, label=f'Agent {i+1}')[0] for i, c in enumerate(agent_colors)]
-    reward_lines = [ax2.plot([], [], color=c, label=f'Agent {i+1}')[0] for i, c in enumerate(agent_colors)]
-    ax1.set(title='Value Estimates', xlabel='Time Step', ylabel='Value')
-    ax2.set(title='Episode Cumulative Reward', xlabel='Time Step', ylabel='Reward')
-    for ax in (ax1, ax2):
-        ax.grid(True)
-        ax.legend()
-    plt.tight_layout()
-    plt.show(block=False)
+    if render:
+        
+        # Rewards and Value Estimates
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 6))
+        value_lines = [ax1.plot([], [], color=c, label=f'Agent {i+1}')[0] for i, c in enumerate(agent_colors)]
+        reward_lines = [ax2.plot([], [], color=c, label=f'Agent {i+1}')[0] for i, c in enumerate(agent_colors)]
+        ax1.set(title='Value Estimates', xlabel='Time Step', ylabel='Value')
+        ax2.set(title='Episode Cumulative Reward', xlabel='Time Step', ylabel='Reward')
+        for ax in (ax1, ax2):
+            ax.grid(True)
+            ax.legend()
+        plt.tight_layout()
+        plt.show(block=False)
 
-    # Policies
-    policy_fig, policy_ax = plt.subplots(1, n_agents, figsize=(8, 6))
-    plt.show(block=False)
+        # Policies
+        policy_fig, policy_ax = plt.subplots(1, n_agents, figsize=(8, 6))
+        plt.show(block=False)
     # # # # # # # # # #
 
 
@@ -95,42 +99,43 @@ def main_training_loop():
                     agent.memory_buffer = torch.cat((agent.memory_buffer[1:], rewards[i].unsqueeze(0).to(device)))
                     buffers[i].add(internal_state, action_idxs[i], log_policies[i], rewards[i], values[i], done)
 
-
-                ## Plotting stuff ##
-                # Rewards and Value Estimates
                 cumulative_rewards += rewards
                 episode_values.append(torch.stack(values).detach().cpu())
-                reward_history.append(cumulative_rewards.clone().cpu())                 
+                reward_history.append(cumulative_rewards.clone().cpu())            
 
-                window = 100
-                values_to_plot = torch.stack(episode_values[-window:])
-                for i, line in enumerate(value_lines):
-                    y_data = values_to_plot[:, i].numpy()
-                    x_data = torch.arange(len(y_data))
-                    line.set_data(x_data, y_data)
-                ax1.relim()
-                ax1.autoscale_view()
+                ## Plotting stuff ##
+                if render:
 
-                rewards_to_plot = torch.stack(reward_history[-window*10:])
-                for i, line in enumerate(reward_lines):
-                    y_data = rewards_to_plot[:, i].numpy()
-                    x_data = torch.arange(len(y_data))
-                    line.set_data(x_data, y_data)
-                ax2.relim()
-                ax2.autoscale_view()
+                    # Rewards and Value Estimates
+                    window = 100
+                    values_to_plot = torch.stack(episode_values[-window:])
+                    for i, line in enumerate(value_lines):
+                        y_data = values_to_plot[:, i].numpy()
+                        x_data = torch.arange(len(y_data))
+                        line.set_data(x_data, y_data)
+                    ax1.relim()
+                    ax1.autoscale_view()
 
-                # Policies
-                for i, (policy, ax) in enumerate(zip(policies, policy_ax)):
-                    ax.clear()
-                    ax.set_title(f'Agent {i+1}')
-                    if i == 0:
-                        ax.set_ylabel('Probability')
-                    ax.set_ylim(0, 1)
-                    ax.grid(True)
-                    colors = ["red" if j == action_idxs[i] else agent_colors[i] for j in range(len(policy))]
-                    ax.bar(torch.arange(len(policy)), policy.cpu().numpy(), color=colors)
+                    rewards_to_plot = torch.stack(reward_history[-window*10:])
+                    for i, line in enumerate(reward_lines):
+                        y_data = rewards_to_plot[:, i].numpy()
+                        x_data = torch.arange(len(y_data))
+                        line.set_data(x_data, y_data)
+                    ax2.relim()
+                    ax2.autoscale_view()
 
-                env.render(rewards)
+                    # Policies
+                    for i, (policy, ax) in enumerate(zip(policies, policy_ax)):
+                        ax.clear()
+                        ax.set_title(f'Agent {i+1}')
+                        if i == 0:
+                            ax.set_ylabel('Probability')
+                        ax.set_ylim(0, 1)
+                        ax.grid(True)
+                        colors = ["red" if j == action_idxs[i] else agent_colors[i] for j in range(len(policy))]
+                        ax.bar(torch.arange(len(policy)), policy.cpu().numpy(), color=colors)
+
+                    env.render(rewards)
                 # # # # # # # # # #
 
 

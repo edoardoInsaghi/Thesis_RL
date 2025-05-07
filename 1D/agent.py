@@ -3,7 +3,6 @@ import torch
 
 class PPO_Buffer:
     def __init__(self, 
-                 buffer_size: int, 
                  gamma: float=0.99,
                  l: float=0.95,
                  epsilon_clamp: float=0.2, 
@@ -11,7 +10,6 @@ class PPO_Buffer:
                  entropy_loss_coeff: float=0.1,
                  ppo_training_steps: int=4):
 
-        self.buffer_size = buffer_size
         self.gamma = gamma
         self.l = l
         self.epsilon_clamp = epsilon_clamp
@@ -34,14 +32,6 @@ class PPO_Buffer:
             reward: torch.Tensor, 
             value: torch.Tensor, 
             done: bool):
-
-        if len(self.states) >= self.buffer_size:
-            self.states.pop(0)
-            self.actions.pop(0)
-            self.log_policies.pop(0)
-            self.rewards.pop(0)
-            self.values.pop(0)
-            self.dones.pop(0)
 
         self.states.append(state.detach())
         self.actions.append(action_idx.detach())
@@ -120,7 +110,13 @@ class PPO_Buffer:
 
 class Agent1D(nn.Module):
 
-    def __init__(self, n_dim: int, n_hidden: int = 128, temp_memory: int = 4, device: torch.device = torch.device("cpu")):
+    def __init__(self, 
+                 n_dim: int, 
+                 n_hidden: int = 128, 
+                 temp_memory: int = 4, 
+                 device: torch.device = torch.device("cpu"),
+                 weights: str = None):
+        
         super(Agent1D, self).__init__()
 
         self.temp_memory = temp_memory * 2
@@ -128,17 +124,26 @@ class Agent1D(nn.Module):
 
         self.n_dim = n_dim
 
-        self.linear1 = nn.Linear(self.temp_memory, n_hidden)
-        self.act1 = nn.ReLU()
-        self.linear2 = nn.Linear(n_hidden, n_hidden)
-        self.act2 = nn.ReLU()
-        self.linear3 = nn.Linear(n_hidden, n_hidden)
-        self.act3 = nn.ReLU()
+        self.actor = nn.Sequential(
+            nn.Linear(self.temp_memory, n_hidden),
+            nn.GELU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.GELU(),
+            nn.Linear(n_hidden, 3),
+            nn.Softmax(dim=-1)
+        )
 
-        self.policy_head = nn.Linear(n_hidden, 3)
-        self.softmax = nn.Softmax(dim=-1)
+        self.critic = nn.Sequential(
+            nn.Linear(self.temp_memory, n_hidden),
+            nn.GELU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.GELU(),
+            nn.Linear(n_hidden, 1)
+        )
 
-        self.value_head = nn.Linear(n_hidden, 1)
+        if weights is not None:
+            self.load_state_dict(torch.load(weights, map_location=device))
+            print(f"Weights loaded from {weights}")
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
         self.device = device
@@ -148,17 +153,8 @@ class Agent1D(nn.Module):
 
     def forward(self, x):
 
-        x = self.linear1(x)
-        x = self.act1(x)
-        x = self.linear2(x)
-        x = self.act2(x)
-        x = self.linear3(x)
-        x = self.act3(x)
-
-        policy = self.policy_head(x)
-        policy = self.softmax(policy)
-
-        value = self.value_head(x)
+        policy = self.actor(x)
+        value = self.critic(x)
 
         return policy, value
 
@@ -166,7 +162,9 @@ class Agent1D(nn.Module):
     @torch.no_grad()
     def act(self):
         self.eval()
-        return self.forward(self.memory_buffer)
+        policy = self.actor(self.memory_buffer)
+        value = self.critic(self.memory_buffer)
+        return policy.detach(), value.detach()
     
     def reset_memory(self):
         self.memory_buffer = torch.zeros(self.temp_memory, device=self.device)
@@ -211,11 +209,15 @@ class Agent1D(nn.Module):
                 avg_actor_loss += actor_loss.item()
                 avg_entropy += -entropy_loss.item()
 
-        buffer.advantages = []
-        buffer.returns = []
-
         avg_critic_loss /= (len(buffer.states) * buffer.ppo_training_steps)
         avg_actor_loss /= (len(buffer.states) * buffer.ppo_training_steps)
         avg_entropy /= (len(buffer.states) * buffer.ppo_training_steps)
 
+        buffer.clear()
+
         return avg_critic_loss, avg_actor_loss, avg_entropy
+    
+
+    def save_model(self, path: str):
+        torch.save(self.state_dict(), path)
+        print(f"Model saved to {path}")

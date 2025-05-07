@@ -4,7 +4,7 @@ from agent import Agent1D, PPO_Buffer
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter(log_dir="runs/1D_ppo_2")
+writer = SummaryWriter(log_dir="runs/1D_ppo_4")
 
 device = torch.device("cpu")
 if torch.backends.mps.is_available():
@@ -20,7 +20,6 @@ def main_training_loop():
     n_observations = 2 # number of chemicals sampled by each agent
     local_steps = 128 # number of steps before updating the policy
     n_episodes = 2000
-    buffer_size = local_steps # size of the buffer for each agent
     batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
@@ -37,8 +36,15 @@ def main_training_loop():
     )
     env = Environment1D(env_args)
 
-    agents = [Agent1D(n_dim=n_observations, temp_memory=40, n_hidden=256, device=device) for _ in range(n_agents)]
-    buffers = [PPO_Buffer(buffer_size=buffer_size, entropy_loss_coeff=0.7) for _ in range(n_agents)]
+    agents = [Agent1D(n_dim=n_observations, 
+                      temp_memory=40,
+                      n_hidden=256, 
+                      device=device,
+                      weights=None)
+                      #weights=f"weights/agent_{i}.pth" if i < n_agents else None)
+              for i in range(n_agents)]
+    
+    buffers = [PPO_Buffer(entropy_loss_coeff=0.5) for _ in range(n_agents)]
 
 
     # # Plotting setup # #
@@ -162,8 +168,13 @@ def main_training_loop():
 
         print(f"Episode {episode+1}/{n_episodes} | Avg Reward: {cumulative_rewards.mean().item():.2f}")
 
-        for agent in agents:
+        for i, agent in enumerate(agents):
             agent.reset_memory()
+            # agent.save_model(f"weights/agent_{i}.pth")
+
+    for i in range(n_agents):
+        agents[i].save_model(f"weights/agent_{i}.pth")
+        print(f"Agent {i} model saved.")
 
 
 if __name__ == "__main__":

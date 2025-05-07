@@ -19,7 +19,7 @@ class EnvArgs1D:
                  reward_function_args=None,
                  velocity: float = 0.01, 
                  movement_noise: float = 0.001, 
-                 max_steps: int = 100000,
+                 max_steps: int = 1000,
                  starting_position_mean: float = 0, 
                  starting_position_var: float = 5):
         
@@ -71,7 +71,7 @@ class Environment1D:
 
         observations = torch.zeros((self.n_actors, self.n_observations))
         rewards = torch.zeros((self.n_actors, self.n_observations))
-        for j in range(self.n_actors): # TODO: vectorize this
+        for j in range(self.n_actors): # TODO: vectorize this?
             for i in range(self.n_observations):
                 observations[j, i] = self.observations[i](self.positions[j])
                 rewards[j, i] = self.reward_function(observations[j, i], **self.reward_function_args[i])
@@ -113,6 +113,7 @@ class Environment1D:
             plt.tight_layout()
             plt.show(block=False)
             plt.pause(0.001)
+    
 
     def render(self, rewards=None):
         self._init_plot()
@@ -133,20 +134,15 @@ class Environment1D:
             average_rewards += reward_i
         average_rewards /= self.n_observations
         
-        # Update the line plot
         self.line.set_data(x_vals.numpy(), average_rewards.numpy())
-        
-        # Update scatter positions with current rewards
+
         if rewards is not None:
             y_positions = rewards
         else:
             y_positions = torch.zeros_like(self.positions)
         
-        self.scatter.set_offsets(
-            torch.stack([self.positions, y_positions], dim=1).numpy()
-        )
+        self.scatter.set_offsets(torch.stack([self.positions, y_positions], dim=1).numpy())
         
-        # Adjust axis limits
         self.ax.set_xlim(x_start, x_end)
         y_min = average_rewards.min().item()
         y_max = average_rewards.max().item()
@@ -154,7 +150,6 @@ class Environment1D:
         self.ax.set_ylim(y_min - padding_y, y_max + padding_y)
         
         self.fig.canvas.draw_idle()
-        plt.pause(0.0001)
 
 
     def reset(self):

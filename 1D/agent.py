@@ -25,6 +25,7 @@ class PPO_Buffer:
         self.returns = []
         self.dones = []
 
+
     def add(self, 
             state: torch.Tensor, 
             action_idx: torch.Tensor,
@@ -150,7 +151,6 @@ class Agent1D(nn.Module):
         self.to(device)
 
     
-
     def forward(self, x):
 
         policy = self.actor(x)
@@ -166,6 +166,7 @@ class Agent1D(nn.Module):
         value = self.critic(self.memory_buffer)
         return policy.detach(), value.detach()
     
+
     def reset_memory(self):
         self.memory_buffer = torch.zeros(self.temp_memory, device=self.device)
 
@@ -216,7 +217,7 @@ class Agent1D(nn.Module):
         buffer.clear()
 
         return avg_critic_loss, avg_actor_loss, avg_entropy
-    
+
 
     def save_model(self, path: str):
         torch.save(self.state_dict(), path)

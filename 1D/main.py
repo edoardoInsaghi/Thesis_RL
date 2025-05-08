@@ -24,8 +24,9 @@ def main_training_loop():
     batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
-    render = False
+    render = True
     save_params = False
+    log_results = False
 
     env_args = EnvArgs1D(
         n_actors=n_agents,
@@ -42,8 +43,8 @@ def main_training_loop():
                       temp_memory=40,
                       n_hidden=256, 
                       device=device,
-                      weights=None)
-                      #weights=f"weights/agent_{i}.pth" if i < n_agents else None)
+                      #weights=None)
+                      weights=f"weights/agent_{i}.pth" if i < n_agents else None)
               for i in range(n_agents)]
     
     buffers = [PPO_Buffer(entropy_loss_coeff=0.5) for _ in range(n_agents)]
@@ -111,7 +112,7 @@ def main_training_loop():
                 episode_values.append(torch.stack(values).detach().cpu())
                 reward_history.append(cumulative_rewards.clone().cpu())            
 
-                ## Plotting stuff ##
+                # # Plotting stuff # #
                 if render:
 
                     # Rewards and Value Estimates
@@ -154,9 +155,10 @@ def main_training_loop():
                 avg_critic_loss_tot += avg_critic_loss
                 avg_actor_loss_tot += avg_actor_loss
                 avg_entropy_tot += avg_entropy
-                writer.add_scalar(f'Loss/Critic_{i+1}', avg_critic_loss, updates)
-                writer.add_scalar(f'Loss/Actor_{i+1}', avg_actor_loss, updates)
-                writer.add_scalar(f'Loss/Entropy_{i+1}', avg_entropy, updates)
+                if log_results:
+                        writer.add_scalar(f'Loss/Critic_{i+1}', avg_critic_loss, updates)
+                        writer.add_scalar(f'Loss/Actor_{i+1}', avg_actor_loss, updates)
+                        writer.add_scalar(f'Loss/Entropy_{i+1}', avg_entropy, updates)
 
             updates += 1
 
@@ -164,9 +166,10 @@ def main_training_loop():
             avg_actor_loss_tot /= n_agents
             avg_entropy_tot /= n_agents
 
-            writer.add_scalar('Loss/Critic_avg', avg_critic_loss_tot, updates)
-            writer.add_scalar('Loss/Actor_avg', avg_actor_loss_tot, updates)
-            writer.add_scalar('Loss/Entropy_avg', avg_entropy_tot, updates)
+            if log_results:
+                writer.add_scalar('Loss/Critic_avg', avg_critic_loss_tot, updates)
+                writer.add_scalar('Loss/Actor_avg', avg_actor_loss_tot, updates)
+                writer.add_scalar('Loss/Entropy_avg', avg_entropy_tot, updates)
 
         print(f"Episode {episode+1}/{n_episodes} | Avg Reward: {cumulative_rewards.mean().item():.2f}")
 

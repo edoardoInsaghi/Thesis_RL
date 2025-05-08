@@ -43,7 +43,7 @@ class Environment1D:
         self.n_actors = args.n_actors
         self.observations = args.observations
         self.n_observations = args.n_observations
-        self.reward_function = self.smooth_window
+        self.reward_function = self.adaptive_reward
         self.reward_function_args = args.reward_function_args
         self.starting_position_mean = args.starting_position_mean
         self.starting_position_var = args.starting_position_var
@@ -89,6 +89,38 @@ class Environment1D:
         high = kwargs.get("high", 10.0)
         sharpness = kwargs.get("sharpness", 0.1)
         return torch.sigmoid(sharpness * (x - low)) * torch.sigmoid(sharpness * (high - x))
+    
+
+    def quadratic_reward(self, x, **kwargs):
+        low = kwargs.get("low", 5.0)
+        high = kwargs.get("high", 10.0)
+        sharpness = kwargs.get("sharpness", 0.1)
+
+        center = (low + high)/2
+        width = (high - low)/2
+    
+        distance = torch.abs(x - center) - width
+        reward = torch.clamp(1 - (sharpness * distance)**2, min=0.0)
+        
+        return reward + 0.1 * torch.sigmoid(10*(x - center))
+    
+    def adaptive_reward(self, x, **kwargs):
+        low = kwargs.get("low", 5.0)
+        high = kwargs.get("high", 10.0)
+        sharpness = kwargs.get("sharpness", 0.1)
+        # Base window
+        window = torch.sigmoid(sharpness*(x - low)) * torch.sigmoid(sharpness*(high - x))
+        
+        # Distance metric
+        distance = torch.where(
+            x < low, low - x,
+            torch.where(x > high, x - high, 0.0)
+        )
+        
+        # Scaling factor
+        scale = 1/(1 + 0.1*distance**2)
+        
+        return window * scale
 
     
     def _init_plot(self):
@@ -149,6 +181,7 @@ class Environment1D:
         self.ax.set_ylim(y_min - padding_y, y_max + padding_y)
         
         self.fig.canvas.draw_idle()
+        plt.pause(0.00001)
 
 
     def reset(self):

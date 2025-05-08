@@ -1,7 +1,6 @@
 import torch
 import matplotlib.pyplot as plt
 from matplotlib import cm
-import inspect
 
 def f1(x):
     return 0.5 * x**2 + 2 * torch.sin(3*x) + torch.cos(5*x)

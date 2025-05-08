@@ -20,10 +20,12 @@ def main_training_loop():
     n_observations = 2 # number of chemicals sampled by each agent
     local_steps = 128 # number of steps before updating the policy
     n_episodes = 2000
+    save_every_episodes = 250
     batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
     render = False
+    save_params = False
 
     env_args = EnvArgs1D(
         n_actors=n_agents,
@@ -69,7 +71,7 @@ def main_training_loop():
 
 
     updates = 0
-    for episode in range(n_episodes):
+    for episode in range(1, n_episodes+1):
 
         state = env.reset()
         done = False
@@ -170,11 +172,13 @@ def main_training_loop():
 
         for i, agent in enumerate(agents):
             agent.reset_memory()
-            # agent.save_model(f"weights/agent_{i}.pth")
+            if episode % save_every_episodes == 0 and save_params:
+                agent.save_model(f"weights/agent_{i}.pth")
 
-    for i in range(n_agents):
-        agents[i].save_model(f"weights/agent_{i}.pth")
-        print(f"Agent {i} model saved.")
+    if save_params:
+        for i in range(n_agents):
+            agents[i].save_model(f"weights/agent_{i}.pth")
+            print(f"Agent {i} model saved.")
 
 
 if __name__ == "__main__":

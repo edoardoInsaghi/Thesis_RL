@@ -78,6 +78,8 @@ class PPO_Buffer:
         log_policies_tensor = torch.stack(self.log_policies).to(device)
         advantages_tensor = self.advantages.to(device)
         returns_tensor = self.returns.to(device)
+        if self.hidden_states:
+            hidden_states_tensor = torch.stack(self.hidden_states).to(device)
 
         idxs = torch.randperm(len(self.states)) if shuffle else torch.arange(len(self.states))
 
@@ -86,6 +88,8 @@ class PPO_Buffer:
         log_policies_tensor = log_policies_tensor[idxs]
         advantages_tensor = advantages_tensor[idxs]
         returns_tensor = returns_tensor[idxs]
+        if self.hidden_states:
+            hidden_states_tensor = hidden_states_tensor[idxs]
 
         batches = []
         for i in range(0, len(self.states), batch_size):
@@ -94,7 +98,8 @@ class PPO_Buffer:
                 "actions": actions_tensor[i:i + batch_size],
                 "log_policies": log_policies_tensor[i:i + batch_size],
                 "advantages": advantages_tensor[i:i + batch_size],
-                "returns": returns_tensor[i:i + batch_size]
+                "returns": returns_tensor[i:i + batch_size],
+                "hidden_states": hidden_states_tensor[i:i + batch_size] if self.hidden_states else [None] * batch_size
             }
             batches.append(batch)
 
@@ -214,10 +219,15 @@ class Agent1D(nn.Module):
                 log_policies = batch["log_policies"]
                 advantages = batch["advantages"]
                 returns = batch["returns"]
-
-                new_policy, new_value, hn = self.forward(states)
                 if self.recurrent:
-                    self.hidden_state = hn
+                    hidden_states = batch["hidden_states"].transpose(0, 1)
+                else:
+                    hidden_states = None
+
+                new_policy, new_value, hn = self.forward(states, hidden_states)
+                if self.recurrent:
+                    new_policy = new_policy[:,-1,:]
+                    new_value = new_value[:,-1,:]
                 new_log_policies = torch.log(new_policy.gather(1, actions))
 
                 ratios = torch.exp(new_log_policies - log_policies)

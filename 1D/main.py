@@ -4,7 +4,6 @@ from agent import Agent1D, PPO_Buffer
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter(log_dir="runs/1D_ppo_4")
 
 device = torch.device("cpu")
 if torch.backends.mps.is_available():
@@ -21,12 +20,14 @@ def main_training_loop():
     local_steps = 128 # number of steps before updating the policy
     n_episodes = 2000
     save_every_episodes = 250
-    batch_size = 64
+    batch_size = 8
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
     render = True
     save_params = False
-    log_results = False
+    log_results = True
+    if log_results:
+        writer = SummaryWriter(log_dir="runs/1D_ppo_8")
 
     env_args = EnvArgs1D(
         n_actors=n_agents,
@@ -39,15 +40,17 @@ def main_training_loop():
     )
     env = Environment1D(env_args)
 
-    agents = [Agent1D(n_dim=n_observations, 
+    agents = [Agent1D(n_dim=n_observations,
                       temp_memory=40,
                       n_hidden=256, 
                       device=device,
-                      #weights=None)
-                      weights=f"weights/agent_{i}.pth" if i < n_agents else None)
+                      weights=None,
+                      #weights=f"weights/agent_{i}.pth" if i < n_agents else None,
+                      recurrent=False)
               for i in range(n_agents)]
     
-    buffers = [PPO_Buffer(entropy_loss_coeff=0.5) for _ in range(n_agents)]
+    buffers = [PPO_Buffer(entropy_loss_coeff=0.5,
+                          critic_loss_coeff=1.0) for _ in range(n_agents)]
 
 
     # # Plotting setup # #
@@ -85,10 +88,13 @@ def main_training_loop():
             
             for _ in range(local_steps):
 
-                actions, values, log_policies, action_idxs, policies = [], [], [], [], []
+                action_idxs, actions, values, log_policies, policies, hidden_states = [], [], [], [], [], []
                 for i, agent in enumerate(agents):
 
-                    policy, value = agent.act() # does not retain grad
+                    policy, value, hn = agent.act() # does not retain grad
+                    if agent.recurrent:
+                        policy = policy[-1, :]
+                        value = value[-1, :]
                     log_policy = torch.log(policy)
                     action_idx = torch.multinomial(policy, 1)
 
@@ -97,17 +103,38 @@ def main_training_loop():
                     values.append(value)
                     log_policies.append(log_policy[action_idx])
                     policies.append(policy)
+                    hidden_states.append(hn)
 
-                    agent.memory_buffer = torch.cat((agent.memory_buffer[1:], actions[-1]))
 
                 state, rewards, info, done = env.step(torch.stack(actions).cpu().squeeze(1)) # joint transition step
                 rewards = rewards.float()
 
+
                 for i, agent in enumerate(agents):
                     internal_state = agent.memory_buffer.clone().detach()
-                    agent.memory_buffer = torch.cat((agent.memory_buffer[1:], rewards[i].unsqueeze(0).to(device)))
-                    buffers[i].add(internal_state, action_idxs[i], log_policies[i], rewards[i], values[i], done)
 
+                    if agent.recurrent:
+                        buffers[i].add(internal_state, 
+                                       action_idxs[i], 
+                                       log_policies[i], 
+                                       rewards[i], 
+                                       values[i], 
+                                       done, 
+                                       hidden_states[i]) 
+                        new_row = torch.tensor([actions[i].item(), rewards[i].item()], device=device).unsqueeze(0)     
+                        agent.memory_buffer = torch.cat((agent.memory_buffer[1:], new_row), dim=0)
+
+                    else:        
+                        buffers[i].add(internal_state, 
+                                       action_idxs[i], 
+                                       log_policies[i], 
+                                       rewards[i], 
+                                       values[i], 
+                                       done)
+                        new_vals = torch.tensor([actions[i].item(), rewards[i].item()], device=device)
+                        agent.memory_buffer = torch.cat((agent.memory_buffer[2:], new_vals), dim=0)
+
+        
                 cumulative_rewards += rewards
                 episode_values.append(torch.stack(values).detach().cpu())
                 reward_history.append(cumulative_rewards.clone().cpu())            
@@ -151,7 +178,7 @@ def main_training_loop():
             avg_critic_loss_tot, avg_actor_loss_tot, avg_entropy_tot = 0, 0, 0
             for i, agent in enumerate(agents):
                 last_value = agent.act()[1] if not done else torch.tensor([0], device=device)
-                avg_critic_loss, avg_actor_loss, avg_entropy = agent.update(buffers[i], last_value, batch_size=batch_size)
+                avg_critic_loss, avg_actor_loss, avg_entropy = agent.update(buffers[i], last_value, batch_size=batch_size, shuffle=False)
                 avg_critic_loss_tot += avg_critic_loss
                 avg_actor_loss_tot += avg_actor_loss
                 avg_entropy_tot += avg_entropy
@@ -171,7 +198,7 @@ def main_training_loop():
                 writer.add_scalar('Loss/Actor_avg', avg_actor_loss_tot, updates)
                 writer.add_scalar('Loss/Entropy_avg', avg_entropy_tot, updates)
 
-        print(f"Episode {episode+1}/{n_episodes} | Avg Reward: {cumulative_rewards.mean().item():.2f}")
+        print(f"Episode {episode}/{n_episodes} | Avg Reward: {cumulative_rewards.mean().item():.2f}")
 
         for i, agent in enumerate(agents):
             agent.reset_memory()
@@ -181,7 +208,6 @@ def main_training_loop():
     if save_params:
         for i in range(n_agents):
             agents[i].save_model(f"weights/agent_{i}.pth")
-            print(f"Agent {i} model saved.")
 
 
 if __name__ == "__main__":

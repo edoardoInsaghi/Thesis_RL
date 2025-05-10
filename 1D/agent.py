@@ -24,6 +24,7 @@ class PPO_Buffer:
         self.advantages = []
         self.returns = []
         self.dones = []
+        self.hidden_states = []
 
 
     def add(self, 
@@ -32,7 +33,8 @@ class PPO_Buffer:
             log_policy: torch.Tensor, 
             reward: torch.Tensor, 
             value: torch.Tensor, 
-            done: bool):
+            done: bool,
+            hidden_state: torch.Tensor=None):
 
         self.states.append(state.detach())
         self.actions.append(action_idx.detach())
@@ -40,6 +42,8 @@ class PPO_Buffer:
         self.rewards.append(reward.detach())
         self.values.append(value.detach())
         self.dones.append(done)
+        if hidden_state is not None:
+            self.hidden_states.append(hidden_state.detach())
 
 
     def compute_returns(self, last_value: torch.Tensor):
@@ -116,31 +120,40 @@ class Agent1D(nn.Module):
                  n_hidden: int = 128, 
                  temp_memory: int = 4, 
                  device: torch.device = torch.device("cpu"),
+                 recurrent: bool = False,
                  weights: str = None):
         
         super(Agent1D, self).__init__()
 
-        self.temp_memory = temp_memory * 2
-        self.memory_buffer = torch.zeros(self.temp_memory, device=device)
-
+        self.recurrent = recurrent
         self.n_dim = n_dim
+        self.n_hidden = n_hidden
+
+        if recurrent:
+            self.temp_memory = temp_memory
+            self.memory_buffer = torch.zeros((temp_memory, 2), device=device)
+            self.hidden_state = torch.zeros((2, n_hidden), device=device)
+            self.backbone = nn.GRU(input_size=2,
+                                    hidden_size=n_hidden, 
+                                    num_layers=2, 
+                                    batch_first=True)
+            
+        else:
+            self.temp_memory = temp_memory * 2
+            self.memory_buffer = torch.zeros(self.temp_memory, device=device)
+            self.hidden_state = None
+            self.backbone = nn.Sequential(
+                nn.Linear(self.temp_memory, n_hidden),
+                nn.GELU(),
+                nn.Linear(n_hidden, n_hidden),
+                nn.GELU(),
+            )
 
         self.actor = nn.Sequential(
-            nn.Linear(self.temp_memory, n_hidden),
-            nn.GELU(),
-            nn.Linear(n_hidden, n_hidden),
-            nn.GELU(),
             nn.Linear(n_hidden, 3),
             nn.Softmax(dim=-1)
         )
-
-        self.critic = nn.Sequential(
-            nn.Linear(self.temp_memory, n_hidden),
-            nn.GELU(),
-            nn.Linear(n_hidden, n_hidden),
-            nn.GELU(),
-            nn.Linear(n_hidden, 1)
-        )
+        self.critic = nn.Linear(n_hidden, 1)
 
         if weights is not None:
             self.load_state_dict(torch.load(weights, map_location=device))
@@ -151,27 +164,40 @@ class Agent1D(nn.Module):
         self.to(device)
 
     
-    def forward(self, x):
+    def forward(self, x, hidden_state=None):
 
-        policy = self.actor(x)
-        value = self.critic(x)
+        if self.recurrent:
+            x, hn = self.backbone(x, hidden_state)
+            policy = self.actor(x)
+            value = self.critic(x)
+            return policy, value, hn
 
-        return policy, value
+        else:
+            x = self.backbone(x)
+            policy = self.actor(x)
+            value = self.critic(x)
+
+        return policy, value, None
 
 
     @torch.no_grad()
     def act(self):
         self.eval()
-        policy = self.actor(self.memory_buffer)
-        value = self.critic(self.memory_buffer)
-        return policy.detach(), value.detach()
+        policy, value, hn = self.forward(self.memory_buffer, self.hidden_state)
+        if self.recurrent:
+            self.hidden_state = hn
+        return policy.detach(), value.detach(), hn
     
 
     def reset_memory(self):
-        self.memory_buffer = torch.zeros(self.temp_memory, device=self.device)
+        if self.recurrent:
+            self.hidden_state = torch.zeros((2, self.n_hidden), device=self.device)
+            self.memory_buffer = torch.zeros((self.temp_memory, 2), device=self.device)
+        else:
+            self.memory_buffer = torch.zeros(self.temp_memory, device=self.device)
 
 
-    def update(self, buffer: PPO_Buffer, last_value: torch.Tensor, batch_size: int=32):
+    def update(self, buffer: PPO_Buffer, last_value: torch.Tensor, batch_size: int=32, shuffle=True):
         
         self.train()
         buffer.compute_returns(last_value)
@@ -181,7 +207,7 @@ class Agent1D(nn.Module):
         avg_entropy = 0
 
         for _ in range(buffer.ppo_training_steps):
-            for batch in buffer.sample_minibatches(batch_size=batch_size, shuffle=True, device=self.device):
+            for batch in buffer.sample_minibatches(batch_size=batch_size, shuffle=shuffle, device=self.device):
 
                 states = batch["states"]
                 actions = batch["actions"]
@@ -189,7 +215,9 @@ class Agent1D(nn.Module):
                 advantages = batch["advantages"]
                 returns = batch["returns"]
 
-                new_policy, new_value = self.forward(states)
+                new_policy, new_value, hn = self.forward(states)
+                if self.recurrent:
+                    self.hidden_state = hn
                 new_log_policies = torch.log(new_policy.gather(1, actions))
 
                 ratios = torch.exp(new_log_policies - log_policies)

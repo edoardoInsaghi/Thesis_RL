@@ -20,14 +20,14 @@ def main_training_loop():
     local_steps = 128 # number of steps before updating the policy
     n_episodes = 2000
     save_every_episodes = 250
-    batch_size = 8
+    batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
     render = True
     save_params = False
-    log_results = True
+    log_results = False
     if log_results:
-        writer = SummaryWriter(log_dir="runs/1D_ppo_8")
+        writer = SummaryWriter(log_dir="runs/1D_ppo_1")
 
     env_args = EnvArgs1D(
         n_actors=n_agents,
@@ -44,13 +44,13 @@ def main_training_loop():
                       temp_memory=40,
                       n_hidden=256, 
                       device=device,
-                      weights=None,
-                      #weights=f"weights/agent_{i}.pth" if i < n_agents else None,
+                      #weights=None,
+                      weights=f"weights/agent_{i}.pth" if i < n_agents else None,
                       recurrent=False)
               for i in range(n_agents)]
     
     buffers = [PPO_Buffer(entropy_loss_coeff=0.5,
-                          critic_loss_coeff=1.0) for _ in range(n_agents)]
+                          critic_loss_coeff=0.5) for _ in range(n_agents)]
 
 
     # # Plotting setup # #
@@ -74,7 +74,7 @@ def main_training_loop():
     # # # # # # # # # #
 
 
-    updates = 0
+    updates = 4789
     for episode in range(1, n_episodes+1):
 
         state = env.reset()
@@ -139,6 +139,7 @@ def main_training_loop():
                 episode_values.append(torch.stack(values).detach().cpu())
                 reward_history.append(cumulative_rewards.clone().cpu())            
 
+
                 # # Plotting stuff # #
                 if render:
 
@@ -197,6 +198,11 @@ def main_training_loop():
                 writer.add_scalar('Loss/Critic_avg', avg_critic_loss_tot, updates)
                 writer.add_scalar('Loss/Actor_avg', avg_actor_loss_tot, updates)
                 writer.add_scalar('Loss/Entropy_avg', avg_entropy_tot, updates)
+
+        if log_results:
+            for i, agent in enumerate(agents):
+                writer.add_scalar(f'Rewards/agent_{i}', cumulative_rewards[i], episode)
+            writer.add_scalar("Rewards/Avg", cumulative_rewards.mean().item(), episode)
 
         print(f"Episode {episode}/{n_episodes} | Avg Reward: {cumulative_rewards.mean().item():.2f}")
 

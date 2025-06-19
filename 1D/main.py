@@ -1,6 +1,6 @@
 import torch
 from environment import EnvArgs1D, Environment1D
-from agent import Agent1D, PPO_Buffer
+from agent import Agent1D, PPO_Buffer, DummyAgent
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from torch.utils.tensorboard import SummaryWriter
@@ -13,21 +13,75 @@ if torch.cuda.is_available():
 print(f'Using device {device}')
 
 
+def dummy_agent_eval():
+    
+    n_agents = 5
+    n_observations = 2
+    n_episodes = 1000
+
+    agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
+
+    render = True
+
+    env_args = EnvArgs1D(
+        n_actors=n_agents,
+        n_observations=n_observations,
+        velocity=0.05,
+        max_steps=500, # number of steps per episode
+        starting_position_mean=0,
+        starting_position_var=7,
+        movement_noise=0.0
+    )
+    env = Environment1D(env_args)
+
+    agents = [DummyAgent() for _ in range(n_agents)]
+
+    all_rewards = []
+
+    for episode in range(1, n_episodes+1):
+
+        state = env.reset()
+        done = False
+        cumulative_rewards = torch.zeros(n_agents, requires_grad=False)
+        rewards = torch.zeros(n_agents, requires_grad=False)
+
+        while not done:
+
+            actions = []
+            for i, agent in enumerate(agents):
+
+                action = agent.act(rewards[i])
+                actions.append(action)
+
+            state, rewards, info, done = env.step(torch.stack(actions).cpu())
+            rewards = rewards.float()
+            cumulative_rewards += rewards 
+
+            if render:
+                env.render(rewards)
+
+        print(f"Episode {episode}/{n_episodes} | Avg Reward: {cumulative_rewards.mean().item():.2f}")
+        all_rewards.append(cumulative_rewards.clone().mean().cpu())
+        print(f"Episode {episode}/{n_episodes} | Avg Reward: {torch.mean(torch.stack(all_rewards))}")
+        
+
+
+
 def main_training_loop():
 
     n_agents = 5
     n_observations = 2 # number of chemicals sampled by each agent
-    local_steps = 128 # number of steps before updating the policy
-    n_episodes = 2000
+    local_steps = 256 # number of steps before updating the policy
+    n_episodes = 200000
     save_every_episodes = 250
     batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
-    render = False
-    save_params = True
-    log_results = True
+    render = True
+    save_params = False
+    log_results = False
     if log_results:
-        writer = SummaryWriter(log_dir="runs/1D_ppo_GRU_1")
+        writer = SummaryWriter(log_dir="runs/1D_ppo_6")
 
     env_args = EnvArgs1D(
         n_actors=n_agents,
@@ -44,13 +98,13 @@ def main_training_loop():
                       temp_memory=40,
                       n_hidden=256, 
                       device=device,
-                      weights=None,
-                      #weights=f"weights/agent_{i}.pth" if i < n_agents else None,
-                      recurrent=True)
+                      #weights=None,
+                      weights=f"weights/agent_{i}_nornn1.pth" if i < n_agents else None,
+                      recurrent=False)
               for i in range(n_agents)]
     
     buffers = [PPO_Buffer(entropy_loss_coeff=0.05,
-                          critic_loss_coeff=0.5) for _ in range(n_agents)]
+                          critic_loss_coeff=0.1) for _ in range(n_agents)]
 
 
     # # Plotting setup # #
@@ -105,10 +159,8 @@ def main_training_loop():
                     policies.append(policy)
                     hidden_states.append(hn)
 
-
                 state, rewards, info, done = env.step(torch.stack(actions).cpu().squeeze(1)) # joint transition step
                 rewards = rewards.float()
-
 
                 for i, agent in enumerate(agents):
                     internal_state = agent.memory_buffer.clone().detach()
@@ -211,12 +263,13 @@ def main_training_loop():
         for i, agent in enumerate(agents):
             agent.reset_memory()
             if episode % save_every_episodes == 0 and save_params:
-                agent.save_model(f"weights/agent_{i}.pth")
+                agent.save_model(f"weights/agent_{i}_nornn1.pth")
 
     if save_params:
         for i in range(n_agents):
-            agents[i].save_model(f"weights/agent_{i}.pth")
+            agents[i].save_model(f"weights/agent_{i}_nornn1.pth")
 
 
 if __name__ == "__main__":
+    #dummy_agent_eval()
     main_training_loop()

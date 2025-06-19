@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch
+import random
 
 class PPO_Buffer:
     def __init__(self, 
@@ -220,7 +221,7 @@ class Agent1D(nn.Module):
                 advantages = batch["advantages"]
                 returns = batch["returns"]
                 if self.recurrent:
-                    hidden_states = batch["hidden_states"].transpose(0, 1)
+                    hidden_states = batch["hidden_states"].transpose(0, 1).contiguous()
                 else:
                     hidden_states = None
 
@@ -260,3 +261,30 @@ class Agent1D(nn.Module):
     def save_model(self, path: str):
         torch.save(self.state_dict(), path)
         print(f"Model saved to {path}")
+
+
+
+class DummyAgent:
+
+    ## TODO: agent moves at random when reward is less than 0.9 and stands still otherwise
+    ## TODO: know x0, when goes out of reasonable bounds go towards x0
+
+    def __init__(self, temp_memory: int=2):
+        self.temp_memory = temp_memory
+        self.last_reward = 0
+        self.last_action = random.choice([-1, 1])
+        self.tolerance = 0.0
+
+    def act(self, reward):
+
+        if torch.abs(reward - self.last_reward) < self.tolerance:
+            action = 0
+        elif reward > self.last_reward:
+            action = self.last_action
+        else:
+            action = -self.last_action
+
+        self.last_reward = reward
+        self.last_action = action
+
+        return torch.tensor(action)

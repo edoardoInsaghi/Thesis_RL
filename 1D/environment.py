@@ -159,3 +159,9 @@ class Environment1D:
         self.done = False
 
         return torch.zeros((self.n_actors, self.n_observations))
+    
+
+
+## TODO:
+## sum i=1->d {Ad cos(kdx + phix)} and tanh
+## sum of wavelet

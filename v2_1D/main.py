@@ -74,8 +74,8 @@ def main_training_loop():
     batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
-    render = True
-    save_params = False
+    render = False
+    save_params = True
     log_results = True
 
     record_params = {
@@ -91,8 +91,8 @@ def main_training_loop():
     }
 
     if log_results:
-        writer = SummaryWriter(log_dir=f"runs/record_params['id']")
-        with open("training_params.txt", "w") as f: f.write(str({k: v for k, v in record_params.items()}))
+        writer = SummaryWriter(log_dir=f"runs/{record_params['id']}")
+        with open("training_params.txt", "a") as f: f.write(str({k: v for k, v in record_params.items()}))
 
 
     env_args = EnvArgs1D(
@@ -222,6 +222,19 @@ def main_training_loop():
                     env.render(rewards)
                 # # # # # # # # # #
                     
+                        
+            critic_losses = []
+            actor_losses = []
+            entropy_losses = []
+            
+            for i, agent in enumerate(agents):
+                last_value = agent.act()[1] if not done else torch.zeros_like(agent.act()[1])
+                avg_critic_loss, avg_actor_loss, avg_entropy = agent.update(
+                    buffers[i], last_value, batch_size=batch_size, shuffle=False
+                )
+                critic_losses.append(avg_critic_loss)
+                actor_losses.append(avg_actor_loss)
+                entropy_losses.append(avg_entropy)
 
         final_rewards = rewards.clone()
         mean_cumulative = cumulative_rewards.mean().item()
@@ -232,19 +245,6 @@ def main_training_loop():
             writer.add_scalar('Rewards/Cumulative_avg', mean_cumulative, episode)
             writer.add_scalar('Rewards/Best_avg', mean_best, episode)
             writer.add_scalar('Rewards/Final_avg', mean_final, episode)
-
-        critic_losses = []
-        actor_losses = []
-        entropy_losses = []
-        
-        for i, agent in enumerate(agents):
-            last_value = agent.act()[1] if not done else torch.zeros_like(agent.act()[1])
-            avg_critic_loss, avg_actor_loss, avg_entropy = agent.update(
-                buffers[i], last_value, batch_size=batch_size, shuffle=False
-            )
-            critic_losses.append(avg_critic_loss)
-            actor_losses.append(avg_actor_loss)
-            entropy_losses.append(avg_entropy)
             
         mean_critic = sum(critic_losses) / n_agents
         mean_actor = sum(actor_losses) / n_agents

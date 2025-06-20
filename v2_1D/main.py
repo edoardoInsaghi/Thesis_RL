@@ -222,7 +222,7 @@ def main_training_loop():
                     env.render(rewards)
                 # # # # # # # # # #
                     
-                        
+            # End of local steps, updating network and log losses  
             critic_losses = []
             actor_losses = []
             entropy_losses = []
@@ -236,6 +236,17 @@ def main_training_loop():
                 actor_losses.append(avg_actor_loss)
                 entropy_losses.append(avg_entropy)
 
+            mean_critic = sum(critic_losses) / n_agents
+            mean_actor = sum(actor_losses) / n_agents
+            mean_entropy = sum(entropy_losses) / n_agents
+            updates += 1
+
+            if log_results:
+                writer.add_scalar('Loss/Critic_avg', mean_critic, updates)
+                writer.add_scalar('Loss/Actor_avg', mean_actor, updates)
+                writer.add_scalar('Loss/Entropy_avg', mean_entropy, updates)
+
+        # End of episode, logging results
         final_rewards = rewards.clone()
         mean_cumulative = cumulative_rewards.mean().item()
         mean_best = best_rewards.mean().item()
@@ -246,17 +257,6 @@ def main_training_loop():
             writer.add_scalar('Rewards/Best_avg', mean_best, episode)
             writer.add_scalar('Rewards/Final_avg', mean_final, episode)
             
-        mean_critic = sum(critic_losses) / n_agents
-        mean_actor = sum(actor_losses) / n_agents
-        mean_entropy = sum(entropy_losses) / n_agents
-        
-        if log_results:
-            writer.add_scalar('Loss/Critic_avg', mean_critic, updates)
-            writer.add_scalar('Loss/Actor_avg', mean_actor, updates)
-            writer.add_scalar('Loss/Entropy_avg', mean_entropy, updates)
-        
-        updates += 1
-
         print(
             f"Episode {episode} | "
             f"Cumulative: {mean_cumulative:.2f} | "

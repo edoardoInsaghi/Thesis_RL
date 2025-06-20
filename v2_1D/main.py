@@ -81,7 +81,7 @@ def main_training_loop():
     record_params = {
         'id': "PPO_1",
         'temp_memory': 80,
-        'max_steps': 1500,
+        'max_steps': 1537,
         'velocity': 0.05,
         'entropy_loss_coeff': 0.05,
         'critic_loss_coeff': 0.1,

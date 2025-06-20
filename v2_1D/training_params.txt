@@ -1,1 +1,1 @@
-{'id': 'PPO_1', 'temp_memory': 80, 'max_steps': 1500, 'velocity': 0.05, 'entropy_loss_coeff': 0.05, 'critic_loss_coeff': 0.1, 'gamma': 0.7, 'movement_noise': 0.0, 'net': 'mlp'}{'id': 'PPO_1', 'temp_memory': 80, 'max_steps': 1500, 'velocity': 0.05, 'entropy_loss_coeff': 0.05, 'critic_loss_coeff': 0.1, 'gamma': 0.7, 'movement_noise': 0.0, 'net': 'mlp'}
+{'id': 'PPO_1', 'temp_memory': 80, 'max_steps': 1537, 'velocity': 0.05, 'entropy_loss_coeff': 0.05, 'critic_loss_coeff': 0.1, 'gamma': 0.7, 'movement_noise': 0.0, 'net': 'mlp'}

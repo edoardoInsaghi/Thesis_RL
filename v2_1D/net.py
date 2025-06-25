@@ -60,9 +60,12 @@ class Transformer(nn.Module):
         self.memory_buffer = torch.zeros(self.temp_memory, 2).to(self.device)
 
     def forward(self, x):
+        print(x.shape)
         x = self.backbone(x.unsqueeze(0)).squeeze(0)
+        print(x.shape)
         policy = self.softmax(self.policy_head(x))
         value = self.value_head(x)
+        print(policy.shape, value.shape)
         return policy, value
     
 

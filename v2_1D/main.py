@@ -14,53 +14,82 @@ print(f'Using device {device}')
 
 
 def dummy_agent_eval():
-    
-    n_agents = 5
-    n_observations = 2
-    n_episodes = 1000
 
-    render = True
+    n_agents = 5
+    n_episodes = 2000
+    render = False
+
+    writer = SummaryWriter(log_dir="runs/DummyAgent")
 
     env_args = EnvArgs1D(
+        cosines=20,
         n_actors=n_agents,
-        n_observations=n_observations,
         velocity=0.05,
-        max_steps=500, # number of steps per episode
+        max_steps=1500,
         starting_position_mean=0,
         starting_position_var=7,
         movement_noise=0.0
     )
     env = Environment1D(env_args)
-
     agents = [DummyAgent() for _ in range(n_agents)]
 
-    all_rewards = []
+    all_cumulative_rewards = []
+    all_best_rewards = []
+    all_final_rewards = []
 
-    for episode in range(1, n_episodes+1):
-
+    for episode in range(1, n_episodes + 1):
         state = env.reset()
         done = False
-        cumulative_rewards = torch.zeros(n_agents, requires_grad=False)
-        rewards = torch.zeros(n_agents, requires_grad=False)
+
+        cumulative_rewards = torch.zeros(n_agents)
+        rewards = torch.zeros(n_agents)
+        best_rewards = torch.zeros(n_agents)
 
         while not done:
-
             actions = []
             for i, agent in enumerate(agents):
-
-                action = agent.act(rewards[i])
+                #action = agent.act_hill_climb(rewards[i])
+                action = agent.act_random_with_tolerance(rewards[i])
                 actions.append(action)
 
-            state, rewards, info, done = env.step(torch.stack(actions).cpu())
+            state, rewards, done = env.step(torch.stack(actions).cpu())
             rewards = rewards.float()
-            cumulative_rewards += rewards 
+            cumulative_rewards += rewards
+            best_rewards = torch.maximum(best_rewards, rewards)
 
             if render:
                 env.render(rewards)
 
-        print(f"Episode {episode}/{n_episodes} | Avg Reward: {cumulative_rewards.mean().item():.2f}")
-        all_rewards.append(cumulative_rewards.clone().mean().cpu())
-        print(f"Episode {episode}/{n_episodes} | Avg Reward: {torch.mean(torch.stack(all_rewards))}")
+        final_rewards = rewards.clone()
+
+
+        all_cumulative_rewards.append(cumulative_rewards.mean().item())
+        all_best_rewards.append(best_rewards.mean().item())
+        all_final_rewards.append(final_rewards.mean().item())
+
+        print(
+            f"Episode {episode}/{n_episodes} | "
+            f"Cumulative: {cumulative_rewards.mean():.2f} | "
+            f"Best: {best_rewards.mean():.2f} | "
+            f"Final: {final_rewards.mean():.2f}"
+        )
+
+    print(len(all_cumulative_rewards), len(all_best_rewards), len(all_final_rewards))
+    all_cumulative_rewards = torch.tensor(all_cumulative_rewards)
+    all_best_rewards = torch.tensor(all_best_rewards)
+    all_final_rewards = torch.tensor(all_final_rewards)
+
+    writer.add_scalar('Dummy_randtresh/Cumulative_Reward_Mean', all_cumulative_rewards.mean().item(), 0)
+    writer.add_scalar('Dummy_randtresh/Best_Reward_Mean', all_best_rewards.mean().item(), 0)
+    writer.add_scalar('Dummy_randtresh/Final_Reward_Mean', all_final_rewards.mean().item(), 0)
+
+    writer.add_histogram('Dummy_randtresh/Cumulative_Reward', all_cumulative_rewards, 0)
+    writer.add_histogram('Dummy_randtresh/Best_Reward', all_best_rewards, 0)
+    writer.add_histogram('Dummy_randtresh/Final_Reward', all_final_rewards, 0)
+
+    writer.close()
+
+
         
 
 
@@ -74,20 +103,20 @@ def main_training_loop():
     batch_size = 64
     agent_colors = cm.tab10([i/n_agents for i in range(n_agents)])
 
-    render = False
-    save_params = True
-    log_results = True
+    render = True
+    save_params = False
+    log_results = False
 
     record_params = {
-        'id': "PPO_1",
+        'id': "PPO_5",
         'temp_memory': 80,
         'max_steps': 1537,
         'velocity': 0.05,
         'entropy_loss_coeff': 0.05,
         'critic_loss_coeff': 0.1,
-        'gamma': 0.7,
+        'gamma': 0.9,
         'movement_noise': 0.0,
-        'net': 'mlp'
+        'net': 'transformer'
     }
 
     if log_results:
@@ -110,7 +139,7 @@ def main_training_loop():
                       temp_memory=record_params['temp_memory'],
                       device=device,
                       weights=None,
-                      #weights=f"weights/agent_{i}_{record_params[id]}" if i < n_agents else None
+                      #weights=f"weights/agent_{i}_{record_params['id']}.pth" if i < n_agents else None
                       )
               for i in range(n_agents)]
     
@@ -122,7 +151,6 @@ def main_training_loop():
 
     # # Plotting setup # #
     if render:
-        
         # Rewards and Value Estimates
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 6))
         value_lines = [ax1.plot([], [], color=c, label=f'Agent {i+1}')[0] for i, c in enumerate(agent_colors)]
@@ -134,7 +162,6 @@ def main_training_loop():
             ax.legend()
         plt.tight_layout()
         plt.show(block=False)
-
         # Policies
         policy_fig, policy_ax = plt.subplots(1, n_agents, figsize=(8, 6))
         plt.show(block=False)
@@ -142,7 +169,7 @@ def main_training_loop():
 
 
     updates = 0
-    for episode in range(1, n_episodes+1):
+    for episode in range(0, n_episodes+1):
 
         state = env.reset()
         done = False
@@ -275,5 +302,5 @@ def main_training_loop():
 
 
 if __name__ == "__main__":
-    #dummy_agent_eval()
-    main_training_loop()
+    dummy_agent_eval()
+    #main_training_loop()

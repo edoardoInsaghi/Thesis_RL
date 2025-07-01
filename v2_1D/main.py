@@ -108,7 +108,7 @@ def main_training_loop():
     log_results = False
 
     record_params = {
-        'id': "PPO_5",
+        'id': "PPO_4",
         'temp_memory': 80,
         'max_steps': 1537,
         'velocity': 0.05,
@@ -116,7 +116,7 @@ def main_training_loop():
         'critic_loss_coeff': 0.1,
         'gamma': 0.9,
         'movement_noise': 0.0,
-        'net': 'transformer'
+        'net': 'mlp'
     }
 
     if log_results:
@@ -138,8 +138,8 @@ def main_training_loop():
     agents = [Agent1D(net=record_params['net'],
                       temp_memory=record_params['temp_memory'],
                       device=device,
-                      weights=None,
-                      #weights=f"weights/agent_{i}_{record_params['id']}.pth" if i < n_agents else None
+                      #weights=None,
+                      weights=f"weights/agent_{i}_{record_params['id']}.pth" if i < n_agents else None
                       )
               for i in range(n_agents)]
     
@@ -302,5 +302,5 @@ def main_training_loop():
 
 
 if __name__ == "__main__":
-    dummy_agent_eval()
-    #main_training_loop()
+    #dummy_agent_eval()
+    main_training_loop()

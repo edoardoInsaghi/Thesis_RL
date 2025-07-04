@@ -167,6 +167,8 @@ class Agent(nn.Module):
                 
                 actor_loss = -torch.min(ratio * advantages, clipped_ratio * advantages).mean()
 
+                ## print(states[1,:], '\n',
+                ##       states[2,:], '\n')
                 ## print("Shapes:", "\n",
                 ##       "states:", states.shape, "\n",
                 ##       "actions", actions.shape, "\n",

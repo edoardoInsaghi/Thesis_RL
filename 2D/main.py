@@ -7,29 +7,39 @@ from torch.utils.tensorboard import SummaryWriter
 import time
 import os
 
-# Device setup
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Using device: {device}")
 
+action_idx_to_repr = {
+    0: [0,1],
+    1: [1,1],
+    2: [1,0],
+    3: [1,-1],
+    4: [0,-1],
+    5: [-1,-1],
+    6: [-1,0],
+    7: [-1,1],
+    8: [0,0]
+}
+
 def main_training_loop():
-    # Training parameters
+
     n_agents = 5
-    local_steps = 64
+    local_steps = 256
     n_episodes = 10000
     save_every_episodes = 100
-    batch_size = 32
+    batch_size = 128
     agent_colors = plt.cm.tab10(np.linspace(0, 1, n_agents))
 
-    eval_train = True
+    eval_train = False
     
-    # Environment and agent parameters
     record_params = {
-        'id': "2D_PPO_80_speed001",
-        'temp_memory': 40,
-        'max_steps': 128,
-        'velocity': 0.1,
+        'id': "random_try",
+        'temp_memory': 20,
+        'max_steps': 1024,
+        'velocity': 0.15,
         'angular_velocity': 45,  # degrees per action
-        'entropy_loss_coeff': 0.01,
+        'entropy_loss_coeff': 0.05,
         'critic_loss_coeff': 0.5,
         'gamma': 0.8,
         'movement_noise': 0.005,
@@ -37,13 +47,9 @@ def main_training_loop():
         'num_actions': 8 + 1  # 24 directions + stand still
     }
     
-    # Create weights directory if not exists
     os.makedirs("weights", exist_ok=True)
-    
-    # Initialize logging
     writer = SummaryWriter(log_dir=f"runs/{record_params['id']}")
     
-    # Environment setup
     env_args = EnvArgs2D(
         n_actors=n_agents,
         velocity=record_params['velocity'],
@@ -56,18 +62,17 @@ def main_training_loop():
     )
     env = Environment2D(env_args)
     
-    # Initialize agents
     agents = [
         Agent(
             net=record_params['net'],
             temp_memory=record_params['temp_memory'],
             num_actions=record_params['num_actions'],
-            device=device
+            device=device,
+            weights=f"weights/agent_{_}_{record_params['id']}.pth"
         ) 
         for _ in range(n_agents)
     ]
-    
-    # Initialize buffers
+
     buffers = [
         PPO_Buffer(
             gamma=record_params['gamma'],
@@ -83,11 +88,10 @@ def main_training_loop():
     if eval_train:
         plt.ion()
         
-        # Create separate figures for metrics and policies
+
         metrics_fig = plt.figure(figsize=(12, 6))
         metrics_fig.suptitle("Agent Performance Metrics", fontsize=16)
         
-        # Metrics figure layout (value and cumulative rewards)
         ax_value = plt.subplot(121)
         ax_value.set_title("Value Function Estimates (Last 100 Steps)")
         ax_value.set_xlabel("Step")
@@ -100,7 +104,6 @@ def main_training_loop():
         ax_cumulative.set_ylabel("Reward")
         ax_cumulative.grid(True)
         
-        # Create lines for each agent
         value_lines = []
         cum_lines = []
         for i in range(n_agents):
@@ -112,43 +115,35 @@ def main_training_loop():
         ax_value.legend()
         ax_cumulative.legend()
         
-        # Create separate figure for policy visualizations
         policy_fig = plt.figure(figsize=(16, 4))
         policy_fig.suptitle("Agent Policies", fontsize=16)
         
-        # Create horizontal layout for policy plots
         policy_axes = []
         for i in range(n_agents):
             ax = policy_fig.add_subplot(1, n_agents, i+1, projection='polar')
             ax.set_title(f"Agent {i}", pad=15)
             policy_axes.append(ax)
         
-        # Initialize policy visualization data
         num_directions = record_params['num_actions'] - 1
         theta = np.linspace(0, 2*np.pi, num_directions, endpoint=False)
         radii = np.zeros(num_directions)
         width = 2 * np.pi / num_directions
         
-        # Create policy bars with agent colors
         policy_bars = []
         for i, ax in enumerate(policy_axes):
-            # Create bars with agent-specific color and inner radius
             bars = ax.bar(theta, radii, width=width, bottom=0.2, 
                         color=agent_colors[i], alpha=0.7, edgecolor='k')
             policy_bars.append(bars)
             
-            # Set radial limits to 0-1 for consistent scaling
             ax.set_ylim(0, 1)
             ax.set_yticklabels([])
             ax.set_theta_zero_location("N")
             ax.set_theta_direction(-1)
             
-            # Clear center area
             ax.add_patch(plt.Circle((0, 0), 0.2, color='white', zorder=10))
         
         metrics_fig.tight_layout()
         
-        # Data storage for visualizations
         value_history = [[] for _ in range(n_agents)]
         cum_reward_history = [[] for _ in range(n_agents)]
         last_policy = [None] * n_agents
@@ -159,9 +154,10 @@ def main_training_loop():
     # ==============================================
     start_time = time.time()
     last_render_time = time.time()
-    render_interval = 0.1  # seconds
-    
-    for episode in range(n_episodes):
+    render_interval = 0.1
+
+    updates = 29839
+    for episode in range(7456, n_episodes+1):
         positions = env.reset()
         done = False
         cumulative_rewards = torch.zeros(n_agents)
@@ -177,7 +173,7 @@ def main_training_loop():
         
         while not done:
             current_time = time.time()
-            action_idxs, actions, values, log_policies, policies = [], [], [], [], []
+            action_idxs, actions, action_reprs, values, log_policies, policies = [], [], [], [], [], []
             
             # Get actions from agents
             for i, agent in enumerate(agents):
@@ -186,6 +182,7 @@ def main_training_loop():
                 
                 action_idxs.append(action_idx)
                 actions.append(env.action_vectors[action_idx])
+                action_reprs.append(action_idx_to_repr[action_idx])
                 values.append(value)
                 log_policy = torch.log(policy[action_idx])
                 log_policies.append(log_policy)
@@ -198,7 +195,10 @@ def main_training_loop():
             
             # Convert to tensors
             action_idxs_tensor = torch.tensor(action_idxs)
+            #print(action_idxs_tensor.shape)
             actions_tensor = torch.stack(actions)
+            #print(actions_tensor.shape)
+            action_reprs_tensor = torch.tensor(action_reprs)
             
             # Environment step
             positions, rewards, done = env.step(action_idxs_tensor)
@@ -214,7 +214,7 @@ def main_training_loop():
                     values[i],
                     done
                 )
-                agent.update_memory(action_idxs_tensor[i], rewards[i])
+                agent.update_memory(action_reprs_tensor[i], rewards[i])
             
             # Update rewards
             cumulative_rewards += rewards
@@ -231,6 +231,7 @@ def main_training_loop():
             
             # Update networks periodically
             if done or (env.time_elapsed % local_steps == 0 and env.time_elapsed > 0):
+                updates += 1
                 critic_losses, actor_losses, entropy_losses = [], [], []
                 
                 for i, agent in enumerate(agents):
@@ -245,9 +246,9 @@ def main_training_loop():
                 
                 # Log losses
                 if not eval_train:
-                    writer.add_scalar('Loss/Critic', np.mean(critic_losses), episode)
-                    writer.add_scalar('Loss/Actor', np.mean(actor_losses), episode)
-                    writer.add_scalar('Loss/Entropy', np.mean(entropy_losses), episode)
+                    writer.add_scalar('Loss/Critic', np.mean(critic_losses), updates)
+                    writer.add_scalar('Loss/Actor', np.mean(actor_losses), updates)
+                    writer.add_scalar('Loss/Entropy', np.mean(entropy_losses), updates)
             
             # Update visualizations at appropriate intervals
             if eval_train:
@@ -329,11 +330,11 @@ def main_training_loop():
         # Save models periodically
         if episode % save_every_episodes == 0 and episode > 0 and not eval_train:
             for i, agent in enumerate(agents):
-                agent.save_model(f"weights/agent_{i}_{record_params['id']}_ep{episode}.pth")
+                agent.save_model(f"weights/agent_{i}_{record_params['id']}.pth")
     
     # Final save
     for i, agent in enumerate(agents):
-        agent.save_model(f"weights/agent_{i}_{record_params['id']}_final.pth")
+        agent.save_model(f"weights/agent_{i}_{record_params['id']}.pth")
     
     writer.close()
     plt.ioff()

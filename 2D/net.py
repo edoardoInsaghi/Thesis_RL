@@ -6,7 +6,7 @@ class MLP(nn.Module):
         super(MLP, self).__init__()
 
         self.device = device
-        self.temp_memory = temp_memory * 2  # (action, reward) pairs
+        self.temp_memory = temp_memory * 3  # (action vector, reward) triplets
         self.num_actions = num_actions
         
         self.memory_buffer = torch.zeros(self.temp_memory).to(self.device)
@@ -22,8 +22,9 @@ class MLP(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def update_memory(self, action_idx: torch.Tensor, reward: torch.Tensor):
-        self.memory_buffer[:-2] = self.memory_buffer[2:].clone()
-        self.memory_buffer[-2] = action_idx
+        self.memory_buffer[:-3] = self.memory_buffer[3:].clone()
+        self.memory_buffer[-3] = action_idx[0]
+        self.memory_buffer[-2] = action_idx[1]
         self.memory_buffer[-1] = reward
 
     def reset_memory(self):

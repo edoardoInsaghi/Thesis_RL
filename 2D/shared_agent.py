@@ -193,7 +193,7 @@ class Agent(nn.Module):
     def update_memory(self, action_idxs: torch.Tensor, rewards: torch.Tensor):
         self.network.update_memory(action_idxs, rewards)
     
-    def update(self, buffer: PPO_Buffer, last_value: torch.Tensor, batch_size: int = 32, shuffle=True):
+    def update(self, buffer: PPO_Buffer, last_value: torch.Tensor, batch_size: int=32, shuffle=True):
         self.network.train()
         buffer.compute_returns(last_value)
         

@@ -2,10 +2,12 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from environment import EnvArgs2D, Environment2D
-from shared_agent import Agent, PPO_Buffer
+from graph_agent import Agent, PPO_Buffer
+from torch_geometric.data import Data
 from torch.utils.tensorboard import SummaryWriter
 import time
 import os
+import math
 
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -22,28 +24,55 @@ action_idx_to_repr = {
     8: [0,0]
 }
 
+def compute_graph(positions, radius, device):
+    n_agents = positions.size(0)
+    
+    # Compute pairwise differences
+    diff = positions.unsqueeze(1) - positions.unsqueeze(0)  # [n_agents, n_agents, 2]
+    dist = torch.norm(diff, dim=-1)  # [n_agents, n_agents]
+    
+    # Create mask (within radius and not self-loop)
+    mask = (dist < radius) & (dist > 0)
+    
+    # Get edge indices
+    edge_index = torch.nonzero(mask, as_tuple=False).t().contiguous()
+    
+    # Compute edge attributes (polar coordinates)
+    if edge_index.size(1) > 0:
+        vec = positions[edge_index[1]] - positions[edge_index[0]]  # [num_edges, 2]
+        distances = torch.norm(vec, dim=1, keepdim=True)  # [num_edges, 1]
+        angles = torch.atan2(vec[:,1], vec[:,0]).unsqueeze(1)  # [num_edges, 1]
+        edge_attr = torch.cat([distances, angles], dim=1)  # [num_edges, 2]
+    else:
+        edge_attr = torch.zeros((0, 2), device=device)
+    
+    return edge_index, edge_attr
+
+
 def main_training_loop():
-    n_agents = 7
+
+    n_agents = 5
     local_steps = 256
-    n_episodes = 100000
-    save_every_episodes = 250
-    batch_size = 128
+    n_episodes = 10000
+    save_every_episodes = 100
+    batch_size = 64
     agent_colors = plt.cm.tab10(np.linspace(0, 1, n_agents))
+    comm_radius = 5.0  # Communication radius for graph edges
 
     eval_train = True
     
     record_params = {
-        'id': "shared_network_gamma095",
+        'id': "gnn_radius",
         'temp_memory': 20,
         'max_steps': 1024,
         'velocity': 0.15,
         'angular_velocity': 45,
         'entropy_loss_coeff': 0.05,
         'critic_loss_coeff': 0.5,
-        'gamma': 0.95,
+        'gamma': 0.8,
         'movement_noise': 0.005,
-        'net': 'mlp',
-        'num_actions': 8 + 1
+        'num_actions': 8 + 1,
+        'num_passes': 2
     }
     
     os.makedirs("weights", exist_ok=True)
@@ -61,21 +90,19 @@ def main_training_loop():
     )
     env = Environment2D(env_args)
     
+    # Create agent
     shared_agent = Agent(
-        net=record_params['net'],
         temp_memory=record_params['temp_memory'],
         num_actions=record_params['num_actions'],
-        n_agents=n_agents,
-        device=device,
-        weights=f"weights/shared_agent_{record_params['id']}.pth",
-        #weights=None 
+        device=device
     )
+    shared_agent.init_memory(n_agents)
 
+    # Create buffer
     shared_buffer = PPO_Buffer(
         gamma=record_params['gamma'],
         entropy_loss_coeff=record_params['entropy_loss_coeff'],
-        critic_loss_coeff=record_params['critic_loss_coeff'],
-        n_agents=n_agents
+        critic_loss_coeff=record_params['critic_loss_coeff']
     )
     
     # ==============================================
@@ -159,6 +186,9 @@ def main_training_loop():
         best_rewards = torch.zeros(n_agents)
         step_count = 0
         
+        # Reset agent memory
+        shared_agent.reset_memory()
+        
         # Reset visualization data for new episode
         if eval_train:
             for i in range(n_agents):
@@ -168,27 +198,26 @@ def main_training_loop():
         while not done:
             current_time = time.time()
             
-            # Batched act
-            policies, values = shared_agent.act()
+            edge_index, edge_attr = compute_graph(positions, comm_radius, device)
+            
+            policies, values = shared_agent.act(edge_index.to(device), edge_attr.to(device))
             action_idxs = torch.multinomial(policies, 1).squeeze()
-            
-            # Convert action indices to representations
             action_reprs = torch.tensor([action_idx_to_repr[idx.item()] for idx in action_idxs])
-            
-            # Environment step
+
             positions, rewards, done = env.step(action_idxs.to("cpu"))
             
-            # Calculate log probabilities
             log_policies = torch.log(policies.gather(1, action_idxs.unsqueeze(1))).squeeze()
             
-            # Add batch to buffer
-            shared_buffer.add_batch(
-                shared_agent.network.memory_buffer.clone(),
-                action_idxs,
-                log_policies,
-                rewards,
-                values.squeeze(),
-                torch.tensor([done] * n_agents)
+            # Add timestep to buffer
+            shared_buffer.add_timestep(
+                node_features=shared_agent.memory_buffer.clone(),
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                actions=action_idxs,
+                log_policies=log_policies,
+                rewards=rewards,
+                values=values.squeeze(),
+                done=done
             )
             
             # Update memory
@@ -209,17 +238,28 @@ def main_training_loop():
                     if len(value_history[i]) > 100:
                         value_history[i] = value_history[i][-100:]
             
+            # Update networks periodically
             if done or (env.time_elapsed % local_steps == 0 and env.time_elapsed > 0):
                 updates += 1
-            
-                _, last_values = shared_agent.act()
-                if done: 
-                    last_values = torch.zeros_like(last_values)
-
+                
+                # Get last values
+                if done:
+                    last_values = torch.zeros(n_agents, device=device)
+                else:
+                    # Recompute graph for last values
+                    last_edge_index, last_edge_attr = compute_graph(positions, comm_radius, device)
+                    _, last_values = shared_agent.act(last_edge_index.to(device), last_edge_attr.to(device))
+                    last_values = last_values.squeeze()
+                
+                # Compute returns
+                shared_buffer.compute_returns(last_values)
+                
+                # Update agent
                 critic_loss, actor_loss, entropy_loss = shared_agent.update(
-                    shared_buffer, last_values.detach().T, batch_size=batch_size
+                    shared_buffer, batch_size=batch_size
                 )
                 
+                # Log losses
                 if not eval_train:
                     writer.add_scalar('Loss/Critic', critic_loss, updates)
                     writer.add_scalar('Loss/Actor', actor_loss, updates)
@@ -297,9 +337,6 @@ def main_training_loop():
               f"Best: {mean_best:5.2f} | "
               f"Final: {mean_final:5.2f} | "
               f"Steps: {step_count}")
-        
-        # Reset agent memories
-        shared_agent.reset_memory()
         
         # Save model periodically
         if episode % save_every_episodes == 0 and episode > 0 and not eval_train:

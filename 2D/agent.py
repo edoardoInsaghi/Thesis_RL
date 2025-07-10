@@ -166,19 +166,6 @@ class Agent(nn.Module):
                 clipped_ratio = torch.clamp(ratio, 1-buffer.epsilon_clamp, 1+buffer.epsilon_clamp)
                 
                 actor_loss = -torch.min(ratio * advantages, clipped_ratio * advantages).mean()
-
-                ## print(states[1,:], '\n',
-                ##       states[2,:], '\n')
-                ## print("Shapes:", "\n",
-                ##       "states:", states.shape, "\n",
-                ##       "actions", actions.shape, "\n",
-                ##       "old_log_policies", old_log_policies.shape, "\n",
-                ##       "advantages", advantages.shape, "\n",
-                ##       "returns", returns.shape, "\n",
-                ##       "new policy", new_policy.shape, "\n",
-                ##       "new_value", new_value.shape, "\n",
-                ##       "new_log_policy", new_log_policy.shape)
-                
                 critic_loss = F.mse_loss(new_value, returns)
                 entropy_loss = torch.sum(new_policy * torch.log(new_policy), dim=1).mean()
                 

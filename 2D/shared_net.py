@@ -11,8 +11,7 @@ class MLP(nn.Module):
         self.n_agents = n_agents
         
         # Batched memory: (n_agents, temp_memory * 3)
-        self.register_buffer('memory_buffer', 
-                           torch.zeros((n_agents, temp_memory * 3), device=device))
+        self.register_buffer('memory_buffer', torch.zeros((n_agents, temp_memory * 3), device=device))
         
         self.backbone = nn.Sequential(
             nn.Linear(temp_memory * 3, 256),
@@ -30,10 +29,9 @@ class MLP(nn.Module):
         # rewards: (n_agents,)
         
         self.memory_buffer[:, :-3] = self.memory_buffer[:, 3:].clone()
-        
-        self.memory_buffer[:, -3] = action_idxs[:,0]
-        self.memory_buffer[:, -2] = action_idxs[:,1]
-        self.memory_buffer[:, -1] = rewards
+        self.memory_buffer[:,-3] = action_idxs[:,0]
+        self.memory_buffer[:,-2] = action_idxs[:,1]
+        self.memory_buffer[:,-1] = rewards
 
     def reset_memory(self):
         self.memory_buffer.zero_()

@@ -25,7 +25,6 @@ action_idx_to_repr = {
 }
 
 def compute_graph(positions, radius, device):
-    n_agents = positions.size(0)
     
     # Compute pairwise differences
     diff = positions.unsqueeze(1) - positions.unsqueeze(0)  # [n_agents, n_agents, 2]
@@ -57,22 +56,22 @@ def main_training_loop():
     save_every_episodes = 100
     batch_size = 64
     agent_colors = plt.cm.tab10(np.linspace(0, 1, n_agents))
-    comm_radius = 5.0  # Communication radius for graph edges
+    comm_radius = 50.0  
 
     eval_train = True
     
     record_params = {
-        'id': "gnn_radius",
+        'id': "gnn",
         'temp_memory': 20,
         'max_steps': 1024,
         'velocity': 0.15,
         'angular_velocity': 45,
         'entropy_loss_coeff': 0.05,
         'critic_loss_coeff': 0.5,
-        'gamma': 0.8,
+        'gamma': 0.95,
         'movement_noise': 0.005,
         'num_actions': 8 + 1,
-        'num_passes': 2
+        'num_passes': 1
     }
     
     os.makedirs("weights", exist_ok=True)
@@ -90,15 +89,15 @@ def main_training_loop():
     )
     env = Environment2D(env_args)
     
-    # Create agent
     shared_agent = Agent(
         temp_memory=record_params['temp_memory'],
         num_actions=record_params['num_actions'],
-        device=device
+        device=device,
+        #weights=f"weights/shared_agent_{record_params['id']}.pth",
+        weights=None 
     )
     shared_agent.init_memory(n_agents)
 
-    # Create buffer
     shared_buffer = PPO_Buffer(
         gamma=record_params['gamma'],
         entropy_loss_coeff=record_params['entropy_loss_coeff'],
@@ -179,36 +178,33 @@ def main_training_loop():
     render_interval = 0.1
     updates = 0
     
-    for episode in range(n_episodes):
+    for episode in range(1, n_episodes+1):
+
         positions = env.reset()
         done = False
         cumulative_rewards = torch.zeros(n_agents)
         best_rewards = torch.zeros(n_agents)
         step_count = 0
-        
-        # Reset agent memory
         shared_agent.reset_memory()
         
-        # Reset visualization data for new episode
+        # Viz
         if eval_train:
             for i in range(n_agents):
                 value_history[i] = []
                 cum_reward_history[i] = []
         
         while not done:
+
             current_time = time.time()
-            
+
             edge_index, edge_attr = compute_graph(positions, comm_radius, device)
-            
             policies, values = shared_agent.act(edge_index.to(device), edge_attr.to(device))
             action_idxs = torch.multinomial(policies, 1).squeeze()
             action_reprs = torch.tensor([action_idx_to_repr[idx.item()] for idx in action_idxs])
+            log_policies = torch.log(policies.gather(1, action_idxs.unsqueeze(1))).squeeze()
 
             positions, rewards, done = env.step(action_idxs.to("cpu"))
             
-            log_policies = torch.log(policies.gather(1, action_idxs.unsqueeze(1))).squeeze()
-            
-            # Add timestep to buffer
             shared_buffer.add_timestep(
                 node_features=shared_agent.memory_buffer.clone(),
                 edge_index=edge_index,
@@ -220,14 +216,11 @@ def main_training_loop():
                 done=done
             )
             
-            # Update memory
             shared_agent.update_memory(action_reprs, rewards)
-            
-            # Update rewards
+
             cumulative_rewards += rewards
             best_rewards = torch.maximum(best_rewards, rewards)
             
-            # Collect visualization data
             if eval_train:
                 for i in range(n_agents):
                     value_history[i].append(values[i].item())
@@ -238,69 +231,55 @@ def main_training_loop():
                     if len(value_history[i]) > 100:
                         value_history[i] = value_history[i][-100:]
             
-            # Update networks periodically
+            # Network update
             if done or (env.time_elapsed % local_steps == 0 and env.time_elapsed > 0):
                 updates += 1
                 
-                # Get last values
                 if done:
                     last_values = torch.zeros(n_agents, device=device)
                 else:
-                    # Recompute graph for last values
                     last_edge_index, last_edge_attr = compute_graph(positions, comm_radius, device)
                     _, last_values = shared_agent.act(last_edge_index.to(device), last_edge_attr.to(device))
                     last_values = last_values.squeeze()
-                
-                # Compute returns
+
                 shared_buffer.compute_returns(last_values)
-                
-                # Update agent
                 critic_loss, actor_loss, entropy_loss = shared_agent.update(
                     shared_buffer, batch_size=batch_size
                 )
-                
-                # Log losses
                 if not eval_train:
                     writer.add_scalar('Loss/Critic', critic_loss, updates)
                     writer.add_scalar('Loss/Actor', actor_loss, updates)
                     writer.add_scalar('Loss/Entropy', entropy_loss, updates)
             
-            # Update visualizations at appropriate intervals
             if eval_train:
                 if current_time - last_render_time > render_interval:
-                    # Update value function plot
+
                     for i, line in enumerate(value_lines):
                         if value_history[i]:
                             x_data = np.arange(len(value_history[i]))
                             line.set_data(x_data, value_history[i])
                             ax_value.relim()
                             ax_value.autoscale_view()
-                    
-                    # Update cumulative reward plot (full episode)
+
                     for i, line in enumerate(cum_lines):
                         if cum_reward_history[i]:
                             x_data = np.arange(len(cum_reward_history[i]))
                             line.set_data(x_data, cum_reward_history[i])
                             ax_cumulative.relim()
                             ax_cumulative.autoscale_view()
-                    
-                    # Update metrics figure
+
                     metrics_fig.canvas.draw()
                     metrics_fig.canvas.flush_events()
-                    
-                    # Update policy visualization
+
                     for i, bars in enumerate(policy_bars):
                         if last_policy[i] is not None:
                             policy = last_policy[i]
                             action_idx = last_actions[i]
-                            
-                            # Update directional probabilities
+
                             for j, bar in enumerate(bars):
-                                # Set height scaled for visibility
                                 height = policy[j] * 5
                                 bar.set_height(height)
-                                
-                                # Highlight chosen action in red
+
                                 if j == action_idx:
                                     bar.set_facecolor('red')
                                     bar.set_edgecolor('darkred')
@@ -309,13 +288,10 @@ def main_training_loop():
                                     bar.set_facecolor(agent_colors[i])
                                     bar.set_edgecolor('black')
                                     bar.set_alpha(0.7)
-                    
-                    # Update policy figure
+
                     policy_fig.canvas.draw()
                     policy_fig.canvas.flush_events()
-                    
-                    # Update environment rendering
-                    env.render(rewards)
+                    env.render(rewards, edge_index=edge_index)
                     
                     last_render_time = current_time
             
@@ -326,7 +302,6 @@ def main_training_loop():
         mean_best = best_rewards.mean().item()
         mean_final = rewards.mean().item()
         
-        # Log rewards
         if not eval_train:
             writer.add_scalar('Reward/Cumulative', mean_cumulative, episode)
             writer.add_scalar('Reward/Best', mean_best, episode)
@@ -338,11 +313,9 @@ def main_training_loop():
               f"Final: {mean_final:5.2f} | "
               f"Steps: {step_count}")
         
-        # Save model periodically
         if episode % save_every_episodes == 0 and episode > 0 and not eval_train:
             shared_agent.save_model(f"weights/shared_agent_{record_params['id']}.pth")
     
-    # Final save
     shared_agent.save_model(f"weights/shared_agent_{record_params['id']}.pth")
     writer.close()
     

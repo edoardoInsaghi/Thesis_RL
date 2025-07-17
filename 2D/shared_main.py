@@ -23,7 +23,7 @@ action_idx_to_repr = {
 }
 
 def main_training_loop():
-    n_agents = 7
+    n_agents = 5
     local_steps = 256
     n_episodes = 100000
     save_every_episodes = 250

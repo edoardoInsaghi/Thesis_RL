@@ -89,17 +89,16 @@ class PPO_Buffer:
         self.returns = returns.view(-1).detach()
 
     def sample_minibatches(self, batch_size, device):
+
         if len(self.node_features) < batch_size:
             raise ValueError("Not enough samples in buffer")
         
-        # Create random indices
         idxs = torch.randperm(len(self.node_features))
         
         batches = []
         for i in range(0, len(self.node_features), batch_size):
             batch_idxs = idxs[i:i + batch_size]
             
-            # Prepare graph batch
             data_list = []
             for idx in batch_idxs:
                 data = Data(
@@ -107,10 +106,9 @@ class PPO_Buffer:
                     edge_index=self.edge_indices[idx],
                     edge_attr=self.edge_attrs[idx]
                 )
-                data_list.append(data)
+                data_list.append(data.to(device))
             graph_batch = Batch.from_data_list(data_list)
             
-            # Prepare other components
             actions_batch = torch.cat([self.actions[idx] for idx in batch_idxs])
             log_policies_batch = torch.cat([self.log_policies[idx] for idx in batch_idxs])
             advantages_batch = self.advantages.view(len(self.node_features), -1)[batch_idxs].view(-1)

@@ -75,11 +75,11 @@ class Environment2D:
         self.quiver = None
         self.reward_texts = None
         self.agent_colors = cm.tab10(np.linspace(0, 1, self.n_actors))
-        self.landscape_changed = True  # Track landscape changes
+        self.landscape_changed = True 
+        self.connection_lines = [] 
 
     def _create_action_vectors(self, num_actions, velocity, angular_velocity):
         vectors = []
-        # Create directional vectors (except stand still)
         for i in range(num_actions - 1):
             angle_deg = i * angular_velocity
             angle_rad = np.deg2rad(angle_deg)
@@ -87,9 +87,7 @@ class Environment2D:
             y = velocity * np.sin(angle_rad)
             vectors.append([x, y])
         
-        # Add stand still action (0, 0)
         vectors.append([0.0, 0.0])
-        
         return torch.tensor(vectors, dtype=torch.float32)
 
     def _init_landscape(self):
@@ -127,6 +125,9 @@ class Environment2D:
         self._init_landscape()
         self.landscape_changed = True  # Flag landscape change
         
+        # Clear any existing connection lines
+        self.connection_lines = []
+        
         return self.positions.clone()
 
     def step(self, action_indices: torch.Tensor):
@@ -163,10 +164,10 @@ class Environment2D:
         
         return self.positions.clone(), rewards, self.done
 
-    def render(self, rewards: torch.Tensor):
+    def render(self, rewards: torch.Tensor, edge_index: torch.Tensor = None):
         if self.fig is None:
             self.fig, self.ax = plt.subplots(figsize=(10, 8))
-            self.ax.set_title("2D Environment")
+            self.ax.set_title("2D Environment with Agent Connections")
             self.ax.set_xlabel("X")
             self.ax.set_ylabel("Y")
             self.ax.grid(True)
@@ -201,25 +202,31 @@ class Environment2D:
                 linewidths=0.5,
                 headwidth=6,
                 headlength=6,
-                headaxislength=5
+                headaxislength=5,
+                zorder=10  # Draw agents on top
             )
             
             # Add rewards text
             self.reward_texts = []
             for i in range(self.n_actors):
                 text = self.ax.text(
-                    self.positions[i, 0].item() + 1,
-                    self.positions[i, 1].item() + 1,
+                    self.positions[i, 0].item() + 0.5,
+                    self.positions[i, 1].item() + 0.5,
                     f"{rewards[i]:.2f}",
                     color='white' if rewards[i] < 0.5 else 'black',
-                    fontsize=9,
-                    bbox=dict(facecolor=self.agent_colors[i], alpha=0.7, boxstyle='round,pad=0.2')
+                    fontsize=8,
+                    bbox=dict(facecolor=self.agent_colors[i], alpha=0.7, boxstyle='round,pad=0.2'),
+                    zorder=15  # Draw text on top of everything
                 )
                 self.reward_texts.append(text)
             
             plt.tight_layout()
             plt.show(block=False)
-            self.landscape_changed = True  # Force update on first render
+            self.landscape_changed = True
+
+            for line in self.connection_lines:
+                line.remove()
+            self.connection_lines = []
         
         # Always update landscape if changed
         if self.landscape_changed:
@@ -257,6 +264,37 @@ class Environment2D:
             )
             
             self.landscape_changed = False
+
+            for line in self.connection_lines:
+                line.remove()
+            self.connection_lines = []
+        
+        # Update agent connections if provided
+        if edge_index is not None:
+            # Clear previous connection lines
+            for line in self.connection_lines:
+                line.remove()
+            self.connection_lines = []
+            
+            # Draw new connections
+            for i in range(edge_index.size(1)):
+                src_idx = edge_index[0, i].item()
+                dst_idx = edge_index[1, i].item()
+                
+                src_pos = self.positions[src_idx].numpy()
+                dst_pos = self.positions[dst_idx].numpy()
+                
+                # Draw connection line
+                line = self.ax.plot(
+                    [src_pos[0], dst_pos[0]],
+                    [src_pos[1], dst_pos[1]],
+                    ':',
+                    color='black',
+                    alpha=0.8,
+                    linewidth=1.0,
+                    zorder=5  # Draw behind agents
+                )[0]
+                self.connection_lines.append(line)
         
         # Update agent positions and directions
         self.quiver.set_offsets(self.positions.numpy())
@@ -267,9 +305,12 @@ class Environment2D:
         
         # Update reward text
         for i, text in enumerate(self.reward_texts):
-            text.set_position((self.positions[i, 0].item() + 1, self.positions[i, 1].item() + 1))
+            text.set_position((self.positions[i, 0].item() + 0.5, 
+                              self.positions[i, 1].item() + 0.5))
             text.set_text(f"{rewards[i]:.2f}")
             text.set_color('white' if rewards[i] < 0.5 else 'black')
+            # Update background color based on current agent color
+            text.get_bbox_patch().set_facecolor(self.agent_colors[i])
         
         # Update plot
         self.fig.canvas.draw()

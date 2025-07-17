@@ -1,0 +1,6 @@
+2 parts 
+background, results
+
+background: motivation (general), why rl (technical), outlook (further work)
+
+table of content with some ideas

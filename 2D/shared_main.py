@@ -33,10 +33,10 @@ def main_training_loop():
     eval_train = True
     
     record_params = {
-        'id': "shared_network_gamma095",
+        'id': "shared_network_fast",
         'temp_memory': 20,
         'max_steps': 1024,
-        'velocity': 0.15,
+        'velocity': 0.75,
         'angular_velocity': 45,
         'entropy_loss_coeff': 0.05,
         'critic_loss_coeff': 0.5,
@@ -67,8 +67,8 @@ def main_training_loop():
         num_actions=record_params['num_actions'],
         n_agents=n_agents,
         device=device,
-        weights=f"weights/shared_agent_{record_params['id']}.pth",
-        #weights=None 
+        #weights=f"weights/shared_agent_{record_params['id']}.pth",
+        weights=None 
     )
 
     shared_buffer = PPO_Buffer(

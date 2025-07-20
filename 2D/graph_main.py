@@ -25,6 +25,7 @@ action_idx_to_repr = {
 }
 
 def compute_graph(positions, radius, device):
+    n_agents = positions.size(0)
     
     # Compute pairwise differences
     diff = positions.unsqueeze(1) - positions.unsqueeze(0)  # [n_agents, n_agents, 2]
@@ -45,11 +46,28 @@ def compute_graph(positions, radius, device):
     else:
         edge_attr = torch.zeros((0, 2), device=device)
     
-    return edge_index, edge_attr
+    return edge_index, edge_attr, dist  # Return distance matrix as well
 
+def calculate_cohesion_rewards(edge_index, dist_matrix, device):
+    """Calculate cohesion reward: 1 / (1 + avg_distance_to_neighbors)"""
+    n_agents = dist_matrix.size(0)
+    cohesion_rewards = torch.zeros(n_agents, device=device)
+    
+    # For each agent, find its neighbors
+    for i in range(n_agents):
+        # Get neighbors (indices where dist > 0 and within radius)
+        neighbor_mask = (dist_matrix[i] > 0) & (dist_matrix[i] < float('inf'))
+        neighbors = torch.nonzero(neighbor_mask, as_tuple=False).squeeze(-1)
+        
+        if len(neighbors) > 0:
+            # Calculate average distance to neighbors
+            avg_distance = torch.mean(dist_matrix[i, neighbors])
+            # Cohesion reward: higher when closer to neighbors
+            cohesion_rewards[i] = 1.0 / (1.0 + avg_distance)
+    
+    return cohesion_rewards
 
 def main_training_loop():
-
     n_agents = 5
     local_steps = 256
     n_episodes = 10000
@@ -57,21 +75,23 @@ def main_training_loop():
     batch_size = 64
     agent_colors = plt.cm.tab10(np.linspace(0, 1, n_agents))
     comm_radius = 50.0  
+    cohesion_beta = 1.0
 
     eval_train = True
     
     record_params = {
-        'id': "gnn",
+        'id': "gnn_stable_fast",
         'temp_memory': 20,
         'max_steps': 1024,
-        'velocity': 0.15,
+        'velocity': 0.75,
         'angular_velocity': 45,
         'entropy_loss_coeff': 0.05,
         'critic_loss_coeff': 0.5,
         'gamma': 0.95,
         'movement_noise': 0.005,
         'num_actions': 8 + 1,
-        'num_passes': 1
+        'num_passes': 1,
+        'cohesion_beta': cohesion_beta  # Add cohesion weight to params
     }
     
     os.makedirs("weights", exist_ok=True)
@@ -93,8 +113,8 @@ def main_training_loop():
         temp_memory=record_params['temp_memory'],
         num_actions=record_params['num_actions'],
         device=device,
-        #weights=f"weights/shared_agent_{record_params['id']}.pth",
-        weights=None 
+        weights=f"weights/shared_agent_{record_params['id']}.pth",
+        #weights=None
     )
     shared_agent.init_memory(n_agents)
 
@@ -176,10 +196,9 @@ def main_training_loop():
     start_time = time.time()
     last_render_time = time.time()
     render_interval = 0.1
-    updates = 0
+    updates = 7900
     
-    for episode in range(1, n_episodes+1):
-
+    for episode in range(1976, n_episodes+1):
         positions = env.reset()
         done = False
         cumulative_rewards = torch.zeros(n_agents)
@@ -194,32 +213,44 @@ def main_training_loop():
                 cum_reward_history[i] = []
         
         while not done:
-
             current_time = time.time()
 
-            edge_index, edge_attr = compute_graph(positions, comm_radius, device)
+            # Compute graph and distances
+            edge_index, edge_attr, dist_matrix = compute_graph(positions, comm_radius, device)
+            
+            # Calculate cohesion rewards
+            cohesion_rewards = calculate_cohesion_rewards(edge_index, dist_matrix, device)
+            
+            # Get agent actions
             policies, values = shared_agent.act(edge_index.to(device), edge_attr.to(device))
             action_idxs = torch.multinomial(policies, 1).squeeze()
             action_reprs = torch.tensor([action_idx_to_repr[idx.item()] for idx in action_idxs])
             log_policies = torch.log(policies.gather(1, action_idxs.unsqueeze(1))).squeeze()
 
-            positions, rewards, done = env.step(action_idxs.to("cpu"))
+            # Step environment to get landscape rewards
+            positions, env_rewards, done = env.step(action_idxs.to("cpu"))
             
+            # Combine rewards: landscape + cohesion
+            total_rewards = env_rewards + record_params['cohesion_beta'] * cohesion_rewards.cpu()
+            
+            # Add experience to buffer with combined rewards
             shared_buffer.add_timestep(
                 node_features=shared_agent.memory_buffer.clone(),
                 edge_index=edge_index,
                 edge_attr=edge_attr,
                 actions=action_idxs,
                 log_policies=log_policies,
-                rewards=rewards,
+                rewards=total_rewards,
                 values=values.squeeze(),
                 done=done
             )
             
-            shared_agent.update_memory(action_reprs, rewards)
+            # Update agent memory with combined rewards
+            shared_agent.update_memory(action_reprs, total_rewards)
 
-            cumulative_rewards += rewards
-            best_rewards = torch.maximum(best_rewards, rewards)
+            # Track rewards
+            cumulative_rewards += total_rewards
+            best_rewards = torch.maximum(best_rewards, total_rewards)
             
             if eval_train:
                 for i in range(n_agents):
@@ -238,7 +269,7 @@ def main_training_loop():
                 if done:
                     last_values = torch.zeros(n_agents, device=device)
                 else:
-                    last_edge_index, last_edge_attr = compute_graph(positions, comm_radius, device)
+                    last_edge_index, last_edge_attr, _ = compute_graph(positions, comm_radius, device)
                     _, last_values = shared_agent.act(last_edge_index.to(device), last_edge_attr.to(device))
                     last_values = last_values.squeeze()
 
@@ -250,10 +281,16 @@ def main_training_loop():
                     writer.add_scalar('Loss/Critic', critic_loss, updates)
                     writer.add_scalar('Loss/Actor', actor_loss, updates)
                     writer.add_scalar('Loss/Entropy', entropy_loss, updates)
+                    
+                    # Log reward components
+                    avg_landscape_reward = env_rewards.mean().item()
+                    avg_cohesion_reward = cohesion_rewards.mean().item()
+                    writer.add_scalar('Reward/Landscape', avg_landscape_reward, updates)
+                    writer.add_scalar('Reward/Cohesion', avg_cohesion_reward, updates)
             
             if eval_train:
                 if current_time - last_render_time > render_interval:
-
+                    # Update metrics plots
                     for i, line in enumerate(value_lines):
                         if value_history[i]:
                             x_data = np.arange(len(value_history[i]))
@@ -271,6 +308,7 @@ def main_training_loop():
                     metrics_fig.canvas.draw()
                     metrics_fig.canvas.flush_events()
 
+                    # Update policy visualizations
                     for i, bars in enumerate(policy_bars):
                         if last_policy[i] is not None:
                             policy = last_policy[i]
@@ -291,7 +329,9 @@ def main_training_loop():
 
                     policy_fig.canvas.draw()
                     policy_fig.canvas.flush_events()
-                    env.render(rewards, edge_index=edge_index)
+                    
+                    # Render environment with combined rewards
+                    env.render(total_rewards, edge_index=edge_index)
                     
                     last_render_time = current_time
             
@@ -300,7 +340,7 @@ def main_training_loop():
         # End of episode
         mean_cumulative = cumulative_rewards.mean().item()
         mean_best = best_rewards.mean().item()
-        mean_final = rewards.mean().item()
+        mean_final = total_rewards.mean().item()
         
         if not eval_train:
             writer.add_scalar('Reward/Cumulative', mean_cumulative, episode)

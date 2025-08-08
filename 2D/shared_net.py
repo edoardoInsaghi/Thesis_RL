@@ -11,8 +11,8 @@ class MLP(nn.Module):
         self.n_agents = n_agents
         
         # Batched memory: (n_agents, temp_memory * 3)
-        self.register_buffer('memory_buffer', torch.zeros((n_agents, temp_memory * 3), device=device))
-        
+        self.memory_buffer = torch.zeros((n_agents, temp_memory * 3), device=device)
+
         self.backbone = nn.Sequential(
             nn.Linear(temp_memory * 3, 256),
             nn.GELU(),

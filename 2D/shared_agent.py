@@ -38,7 +38,6 @@ class PPO_Buffer:
                  values: torch.Tensor, 
                  dones: torch.Tensor):
         
-        # Add batch of experiences from all agents
         self.states.extend(states.detach().unbind(0))
         self.actions.extend(action_idxs.detach().unbind(0))
         self.log_policies.extend(log_policies.detach().unbind(0))
@@ -47,7 +46,7 @@ class PPO_Buffer:
         self.dones.extend(dones.detach().unbind(0))
 
     def compute_returns_2(self, last_values: torch.Tensor):
-        # Stack all experiences
+        
         rewards = torch.stack(self.rewards)
         values = torch.stack(self.values + last_values)
         dones = torch.tensor(self.dones, dtype=torch.float32)
@@ -67,7 +66,6 @@ class PPO_Buffer:
     
     def compute_returns(self, last_values: torch.Tensor):
 
-        # Convert to tensors
         rewards = torch.stack(self.rewards)
         values = torch.stack(self.values)
         dones = torch.tensor(self.dones, dtype=torch.float32)
@@ -97,14 +95,11 @@ class PPO_Buffer:
             
             advantages[:, i] = torch.stack(agent_advantages)
         
-        # Normalize advantages across all agents
         advantages_flat = advantages.view(-1)
         advantages_normalized = (advantages_flat - advantages_flat.mean()) / (advantages_flat.std() + 1e-8)
         
-        # Compute returns
         returns = advantages + values.to("cpu")
         
-        # Store results
         self.advantages = advantages_normalized.detach()
         self.returns = returns.view(-1).detach()
         

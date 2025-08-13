@@ -22,6 +22,25 @@ action_idx_to_repr = {
     8: [0,0]
 }
 
+def compute_graph(positions, radius, device):
+
+    diff = positions.unsqueeze(1) - positions.unsqueeze(0)  # [n_agents, n_agents, 2]
+    dist = torch.norm(diff, dim=-1)  # [n_agents, n_agents]
+    
+    mask = (dist < radius) & (dist > 0)
+    edge_index = torch.nonzero(mask, as_tuple=False).t().contiguous()
+    
+    if edge_index.size(1) > 0:
+        vec = positions[edge_index[1]] - positions[edge_index[0]]  # [num_edges, 2]
+        distances = torch.norm(vec, dim=1, keepdim=True)  # [num_edges, 1]
+        angles = torch.atan2(vec[:,1], vec[:,0]).unsqueeze(1)  # [num_edges, 1]
+        edge_attr = torch.cat([distances, angles], dim=1)  # [num_edges, 2]
+    else:
+        edge_attr = torch.zeros((0, 2), device=device)
+    
+    return edge_index, edge_attr, dist
+
+
 def main_training_loop():
 
     n_agents = 5
@@ -34,8 +53,8 @@ def main_training_loop():
     eval_train = False
     
     record_params = {
-        'id': "shared_network",
-        'temp_memory': 20,
+        'id': "shared_network_10",
+        'temp_memory': 10,
         'max_steps': 1024,
         'velocity': 0.5,
         'angular_velocity': 45,
@@ -43,6 +62,7 @@ def main_training_loop():
         'critic_loss_coeff': 0.5,
         'gamma': 0.95,
         'movement_noise': 0.005,
+        'radius': 20.0,
         'net': 'mlp',
         'num_actions': 8 + 1
     }
@@ -159,7 +179,6 @@ def main_training_loop():
         best_rewards = torch.zeros(n_agents)
         step_count = 0
         
-        # Reset visualization data for new episode
         if eval_train:
             for i in range(n_agents):
                 value_history[i] = []
@@ -169,6 +188,7 @@ def main_training_loop():
 
             current_time = time.time()
             
+            edge_indexes, edge_attr, dist = compute_graph()
             policies, values = shared_agent.act()
             action_idxs = torch.multinomial(policies, 1).squeeze()
             action_reprs = torch.tensor([action_idx_to_repr[idx.item()] for idx in action_idxs]) 
@@ -215,10 +235,9 @@ def main_training_loop():
                     writer.add_scalar('Loss/Actor', actor_loss, updates)
                     writer.add_scalar('Loss/Entropy', entropy_loss, updates)
             
-            # Update visualizations at appropriate intervals
+            # viz
             if eval_train:
                 if current_time - last_render_time > render_interval:
-                    # Update value function plot
                     for i, line in enumerate(value_lines):
                         if value_history[i]:
                             x_data = np.arange(len(value_history[i]))
@@ -226,7 +245,6 @@ def main_training_loop():
                             ax_value.relim()
                             ax_value.autoscale_view()
                     
-                    # Update cumulative reward plot (full episode)
                     for i, line in enumerate(cum_lines):
                         if cum_reward_history[i]:
                             x_data = np.arange(len(cum_reward_history[i]))
@@ -234,23 +252,18 @@ def main_training_loop():
                             ax_cumulative.relim()
                             ax_cumulative.autoscale_view()
                     
-                    # Update metrics figure
                     metrics_fig.canvas.draw()
                     metrics_fig.canvas.flush_events()
                     
-                    # Update policy visualization
                     for i, bars in enumerate(policy_bars):
                         if last_policy[i] is not None:
                             policy = last_policy[i]
                             action_idx = last_actions[i]
                             
-                            # Update directional probabilities
                             for j, bar in enumerate(bars):
-                                # Set height scaled for visibility
                                 height = policy[j] * 5
                                 bar.set_height(height)
                                 
-                                # Highlight chosen action in red
                                 if j == action_idx:
                                     bar.set_facecolor('red')
                                     bar.set_edgecolor('darkred')
@@ -260,23 +273,19 @@ def main_training_loop():
                                     bar.set_edgecolor('black')
                                     bar.set_alpha(0.7)
                     
-                    # Update policy figure
                     policy_fig.canvas.draw()
                     policy_fig.canvas.flush_events()
                     
-                    # Update environment rendering
                     env.render(rewards)
                     
                     last_render_time = current_time
             
             step_count += 1
         
-        # End of episode
         mean_cumulative = cumulative_rewards.mean().item()
         mean_best = best_rewards.mean().item()
         mean_final = rewards.mean().item()
         
-        # Log rewards
         if not eval_train:
             writer.add_scalar('Reward/Cumulative', mean_cumulative, episode)
             writer.add_scalar('Reward/Best', mean_best, episode)
@@ -288,14 +297,11 @@ def main_training_loop():
               f"Final: {mean_final:5.2f} | "
               f"Steps: {step_count}")
         
-        # Reset agent memories
         shared_agent.reset_memory()
         
-        # Save model periodically
         if episode % save_every_episodes == 0 and episode > 0 and not eval_train:
             shared_agent.save_model(f"weights/shared_agent_{record_params['id']}.pth")
     
-    # Final save
     shared_agent.save_model(f"weights/shared_agent_{record_params['id']}.pth")
     writer.close()
     

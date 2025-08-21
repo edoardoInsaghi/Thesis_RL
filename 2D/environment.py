@@ -8,13 +8,13 @@ class EnvArgs2D:
     def __init__(self, 
                  n_actors: int = 5,
                  velocity: float = 0.01,
-                 angular_velocity: float = 15,  # degrees per action
+                 angular_velocity: float = 45,  # degrees per action
                  movement_noise: float = 0.001,
                  max_steps: int = 1000,
                  starting_position_mean: tuple = (0, 0),
                  starting_position_var: float = 10,
                  cosines: int = 10,
-                 num_actions: int = 24):  # 24 directions + stand still
+                 num_actions: int = 9):  # 8 directions + stand still
         
         self.n_actors = n_actors
         self.starting_position_mean = starting_position_mean
@@ -29,6 +29,7 @@ class EnvArgs2D:
 
 def reward_function_2d(amplitudes, freqs_x, freqs_y, phases, 
                        landscape_center, landscape_width, positions):
+    
     # Calculate dot product for each position and cosine component
     x = positions[:, 0].unsqueeze(1)
     y = positions[:, 1].unsqueeze(1)
@@ -56,14 +57,12 @@ class Environment2D:
         self.time_elapsed = 0
         self.done = False
         
-        # Create action vectors (directions)
         self.action_vectors = self._create_action_vectors(
             args.num_actions, 
             args.velocity,
             args.angular_velocity
         )
         
-        # Initialize landscape parameters
         self._init_landscape()
         
         # Visualization
@@ -119,13 +118,11 @@ class Environment2D:
             torch.sin(angles)
         ], dim=1)
         
-        # Reset time and landscape
         self.time_elapsed = 0
         self.done = False
         self._init_landscape()
-        self.landscape_changed = True  # Flag landscape change
+        self.landscape_changed = True # Force to recumpute landscape
         
-        # Clear any existing connection lines
         self.connection_lines = []
         
         return self.positions.clone()

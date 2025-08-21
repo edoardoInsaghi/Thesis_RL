@@ -53,8 +53,8 @@ def main_training_loop():
     eval_train = False
     
     record_params = {
-        'id': "shared_network_10",
-        'temp_memory': 10,
+        'id': "shared_network_50",
+        'temp_memory': 50,
         'max_steps': 1024,
         'velocity': 0.5,
         'angular_velocity': 45,
@@ -188,7 +188,6 @@ def main_training_loop():
 
             current_time = time.time()
             
-            edge_indexes, edge_attr, dist = compute_graph()
             policies, values = shared_agent.act()
             action_idxs = torch.multinomial(policies, 1).squeeze()
             action_reprs = torch.tensor([action_idx_to_repr[idx.item()] for idx in action_idxs]) 

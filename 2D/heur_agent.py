@@ -2,19 +2,12 @@ import torch
 import time
 import math
 import numpy as np
+import random
 import matplotlib.pyplot as plt
 from environment import EnvArgs2D, Environment2D
 
 class RelativePSOMultiAgent:
-    def __init__(self, env, comm_radius=50.0, memory_size=5, cognitive_decay=0.95):
-        """
-        Multi-agent PSO with relative position memory
-        
-        :param env: Environment instance
-        :param comm_radius: Communication radius for neighbor detection
-        :param memory_size: Number of best positions to remember
-        :param cognitive_decay: Decay rate for cognitive memory importance
-        """
+    def __init__(self, env, comm_radius=50.0, memory_size=5):
         self.env = env
         self.n_agents = env.n_actors
         self.action_vectors = env.action_vectors
@@ -23,13 +16,12 @@ class RelativePSOMultiAgent:
         self.reset()
     
     def reset(self):
-        """Reset all agent states between episodes"""
         self.current_displacement = torch.zeros((self.n_agents, 2))
         
         self.cognitive_memory = [{
             'positions': [],
             'rewards': [],
-            'displacements': []  # From start when recorded
+            'displacements': []
         } for _ in range(self.n_agents)]
         
         self.social_best = [{
@@ -39,6 +31,7 @@ class RelativePSOMultiAgent:
         
         self.movement_history = [[] for _ in range(self.n_agents)]
     
+
     def update_cognitive_memory(self, agent_idx, reward, current_position, displacement):
         mem = self.cognitive_memory[agent_idx]
         
@@ -51,6 +44,7 @@ class RelativePSOMultiAgent:
             mem['rewards'] = mem['rewards'][-self.memory_size:]
             mem['displacements'] = mem['displacements'][-self.memory_size:]
     
+
     def get_best_cognitive_direction(self, agent_idx, current_position, current_displacement):
         mem = self.cognitive_memory[agent_idx]
         if not mem['positions']:
@@ -78,6 +72,8 @@ class RelativePSOMultiAgent:
             for j in neighbors:
                 if self.cognitive_memory[j]['rewards']:
                     neighbor_best_reward = max(self.cognitive_memory[j]['rewards'])
+                    neighbor_best_reward = self.cognitive_memory[j]['rewards'][-1]
+
                     if neighbor_best_reward > best_reward:
                         best_reward = neighbor_best_reward
                         best_agent = j
@@ -87,6 +83,7 @@ class RelativePSOMultiAgent:
             
             best_idx = torch.argmax(torch.tensor(self.cognitive_memory[best_agent]['rewards'])).item()
             best_position = self.cognitive_memory[best_agent]['positions'][best_idx]
+            best_position = self.cognitive_memory[best_agent]['positions'][-1]
             
             relative_position = best_position - positions[i]
             
@@ -127,7 +124,9 @@ class RelativePSOMultiAgent:
                 social_dir = social_dir / torch.norm(social_dir)
             
             desired_direction = (cognitive_weight * cognitive_dir + social_weight * social_dir)
-            
+            #desired_direction = random.uniform(0, 1) * cognitive_dir + \
+            #                    random.uniform(0, 1) * social_dir
+
             if torch.norm(desired_direction) < 1e-5:
                 actions[i] = len(self.action_vectors) - 1 
             else:

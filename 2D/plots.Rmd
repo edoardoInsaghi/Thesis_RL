@@ -1,0 +1,17 @@
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+
+data = read.csv("Best_RL_results.csv")
+```
+
+
+```{r}
+df = data %>% 
+  pivot_longer(cols=c(normalized_cumulative_reward, final_rewards, best_reward))
+  
+ggplot(df, aes(y=value, fill=name)) + geom_boxplot()
+```
+
+

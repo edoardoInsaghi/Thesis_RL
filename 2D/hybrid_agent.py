@@ -3,7 +3,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 import csv
-import os
+from tqdm import tqdm, trange
 from pathlib import Path
 from environment import EnvArgs2D, Environment2D
 from shared_agent import Agent
@@ -156,10 +156,12 @@ def main_hybrid_evaluation(rl_weights_path,
         results_path = Path(f"{model_name}_results.csv")
         assert results_path.exists(), f"Results file {results_path} does not exist"
     
-    for episode in range(num_episodes):
+    pbar = trange(num_episodes, desc=f"Running {num_episodes} episodes", unit="episode")
+
+    for episode in pbar:
         positions = hybrid_agent.reset()
         cumulative_rewards = torch.zeros(n_agents)
-        best_reward = -float('inf')
+        best_reward = torch.zeros_like(cumulative_rewards)
         done = False
         step_count = 0
         
@@ -170,10 +172,7 @@ def main_hybrid_evaluation(rl_weights_path,
             
             new_positions, rewards, sampled_rewards, done, use_rl = hybrid_agent.step(positions)
             cumulative_rewards += rewards
-            
-            current_max = torch.max(rewards).item()
-            if current_max > best_reward:
-                best_reward = current_max
+            best_reward = torch.maximum(best_reward, rewards)
             
             if render:
                 agent_colors = []
@@ -207,20 +206,18 @@ def main_hybrid_evaluation(rl_weights_path,
                 writer = csv.writer(csvfile)
                 writer.writerow([
                     episode,
+                    torch.max(normalized_cumulative).item(),
+                    torch.max(rewards).item(),
+                    torch.max(best_reward).item(),
                     normalized_cumulative.mean().item(),
                     rewards.mean().item(),
-                    best_reward,
+                    best_reward.mean().item(),
                     n_agents,
                     comm_radius,
                     movement_noise,
                     sample_noise,
                     model_name,
                 ])
-        
-        print(f"Episode {episode+1}/{num_episodes} complete. "
-              f"Avg cumulative reward: {normalized_cumulative.mean().item():.2f}, "
-              f"Final reward: {rewards.mean().item():.2f}, "
-              f"Best reward: {best_reward:.2f}")
     
     if not render:
         print(f"Evaluation complete. Results saved to {csv_filename}")
@@ -238,13 +235,17 @@ def main_evaluation_experiment(rl_weights_path):
                              'normalized_cumulative_reward', 
                              'final_rewards', 
                              'best_reward', 
+                             'mean_normalized_cumulative_reward', 
+                             'mean_final_rewards', 
+                             'mean_best_reward',
                              'n_agents',
                              'comm_radius',
                              'movement_noise',
                              'sample_noise',
                              'model'])
+        print(f"Created file {results_path}")
 
-    for n_agents in [5, 10, 20]:
+    for n_agents in [5, 10]: #, 15]:
         for comm_radius in [0.0, 10.0, 20.0, 50.0]:
             for movement_noise in [0.01, 0.05, 0.1]:
                 for sample_noise in [0.01, 0.05, 0.1]:
@@ -261,7 +262,7 @@ def main_evaluation_experiment(rl_weights_path):
                         movement_noise=movement_noise,
                         sample_noise=sample_noise,
                         render=False,
-                        model_name=f"Best_RL",
+                        model_name=model_name,
                     )
 
 

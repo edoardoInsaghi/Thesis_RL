@@ -45,9 +45,10 @@ class HybridAgent:
         self.heur_agent = RelativePSOMultiAgent(
             env, 
             comm_radius=comm_radius,
-            memory_size=50
+            memory_size=500
         )
         self.current_displacements = torch.zeros((env.n_actors, 2))
+        self.prev_rewards = torch.zeros(env.n_actors)
         self.last_rewards = torch.zeros(env.n_actors)
         self.has_neighbor = torch.zeros(env.n_actors, dtype=torch.bool)
         self.is_best = torch.zeros(env.n_actors, dtype=torch.bool)
@@ -80,7 +81,7 @@ class HybridAgent:
             max_reward = torch.max(group_rewards)
             
             self.is_best[i] = (self.last_rewards[i] >= max_reward - 1e-5)
-            # self.is_best[i] = False # All agents are heuristic if this is on
+
 
         # Update heuristic agent memory
         for i in range(self.n_agents):
@@ -93,17 +94,21 @@ class HybridAgent:
         self.heur_agent.update_social_memory(positions)
 
         # Get heuristic actions
-        heur_actions = self.heur_agent.compute_actions(positions)
+        heur_actions = self.heur_agent.compute_actions()
 
         # Get RL actions
         with torch.no_grad():
             policies, _ = self.rl_agent.act()
             rl_actions = torch.multinomial(policies, 1).squeeze().cpu()
 
+        reward_improved = self.last_rewards > self.prev_rewards
+
         # Combine actions: use RL when alone OR when best in neighborhood
-        use_rl = (~self.has_neighbor.any(dim=1)) | self.is_best
+        use_rl = (~self.has_neighbor.any(dim=1)) | self.is_best | reward_improved
+        #use_rl = torch.zeros_like(use_rl, dtype=torch.bool) # For testing heuristic only agent
         actions = torch.where(use_rl, rl_actions, heur_actions)
         
+        # actions = torch.randint(0, self.env.args.num_actions, (self.n_agents,)) # For testing random agent
         new_positions, rewards, done = self.env.step(actions)
         sampled_rewards = rewards.clone() + torch.randn_like(rewards) * self.sample_noise
         
@@ -112,7 +117,8 @@ class HybridAgent:
         
         action_reprs = torch.tensor([action_idx_to_repr[idx.item()] for idx in actions])
         self.rl_agent.update_memory(action_reprs, sampled_rewards)
-        
+
+        self.prev_rewards = self.last_rewards.clone()
         self.last_rewards = sampled_rewards.clone()
         
         return new_positions, rewards, sampled_rewards, done, use_rl
@@ -145,7 +151,7 @@ def main_hybrid_evaluation(rl_weights_path,
         movement_noise=movement_noise,
         max_steps=max_steps,
         starting_position_mean=(0, 0),
-        starting_position_var=10,
+        starting_position_var=15,
         num_actions=9
     )
     env = Environment2D(env_args)
@@ -226,7 +232,7 @@ def main_hybrid_evaluation(rl_weights_path,
 
 def main_evaluation_experiment(rl_weights_path):
 
-    model_name = "Best_RL"
+    model_name = "Best_RL_Improve_RL2"
     results_path = Path(f"{model_name}_results.csv")
     if not results_path.exists():
         with open(results_path, 'w', newline='') as csvfile:
@@ -268,11 +274,11 @@ def main_evaluation_experiment(rl_weights_path):
 
 if __name__ == "__main__":
 
-    simple_play = False
+    simple_play = True
     if simple_play:
         main_hybrid_evaluation("weights/shared_agent_shared_network_10.pth", 
-                            n_agents = 10,
-                            comm_radius = 10.0,
+                            n_agents = 5,
+                            comm_radius = 30.0,
                             movement_noise = 0.01,
                             sample_noise = 0.01,
                             render = True,

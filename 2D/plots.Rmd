@@ -4,14 +4,90 @@ library(tidyverse)
 library(ggplot2)
 
 data = read.csv("Best_RL_results.csv")
+data2 = read.csv("Heur_Only_results.csv")
+data3 = read.csv("Random_Baseline_results.csv")
+data4 =  read.csv("Best_RL_Improve_RL_results.csv")
+colnames(data)
 ```
-
-
 ```{r}
-df = data %>% 
-  pivot_longer(cols=c(normalized_cumulative_reward, final_rewards, best_reward))
-  
-ggplot(df, aes(y=value, fill=name)) + geom_boxplot()
-```
+library(dplyr)
+library(tidyr)
+library(ggplot2)
 
+sam_noise = 0.1
+move_noise = 0.1
+
+df = rbind(data, data2, data4) %>%
+  pivot_longer(cols = c(normalized_cumulative_reward, best_reward,
+                        mean_normalized_cumulative_reward, mean_best_reward))
+
+df_random_5 = data3 %>% filter(n_agents==5) %>%
+  summarise(
+    normalized_cumulative_reward      = mean(normalized_cumulative_reward,      na.rm = TRUE),
+    best_reward                       = mean(best_reward,                       na.rm = TRUE),
+    mean_normalized_cumulative_reward = mean(mean_normalized_cumulative_reward, na.rm = TRUE),
+    mean_best_reward                  = mean(mean_best_reward,                  na.rm = TRUE)
+  ) %>%
+  pivot_longer(everything(), names_to = "name", values_to = "value")
+  
+df_random_10 = data3 %>% filter(n_agents==10) %>%
+  summarise(
+    normalized_cumulative_reward      = mean(normalized_cumulative_reward,      na.rm = TRUE),
+    best_reward                       = mean(best_reward,                       na.rm = TRUE),
+    mean_normalized_cumulative_reward = mean(mean_normalized_cumulative_reward, na.rm = TRUE),
+    mean_best_reward                  = mean(mean_best_reward,                  na.rm = TRUE)
+  ) %>%
+  pivot_longer(everything(), names_to = "name", values_to = "value")
+
+
+facet_levels   = c("normalized_cumulative_reward", "best_reward",
+                  "mean_normalized_cumulative_reward", "mean_best_reward")
+df$name        = factor(df$name,        levels = facet_levels)
+df_random_5$name = factor(df_random_5$name, levels = facet_levels)
+df_random_10$name = factor(df_random_10$name, levels = facet_levels)
+
+ggplot(df %>% filter(n_agents == 5, movement_noise == move_noise, sample_noise == sam_noise),
+       aes(y = value, x = as.factor(comm_radius), fill = model)) +
+  geom_boxplot() +
+  facet_wrap(vars(name)) +
+  geom_hline(data = df_random_5, aes(yintercept = value), color = "black", linetype = "dashed")
+
+ggplot(df %>% filter(n_agents == 10, movement_noise == move_noise, sample_noise == sam_noise),
+       aes(y = value, x = as.factor(comm_radius), fill = model)) +
+  geom_boxplot() +
+  facet_wrap(vars(name)) +
+  geom_hline(data = df_random_10, aes(yintercept = value), color = "black", linetype = "dashed")
+
+
+dfmean = rbind(data, data2, data4) %>% 
+  group_by(n_agents, comm_radius, movement_noise, sample_noise, model) %>%
+  summarise(
+    mean_normalized_cumulative_reward = mean(mean_normalized_cumulative_reward, na.rm = TRUE),
+    mean_best_reward                  = mean(mean_best_reward,                  na.rm = TRUE),
+    normalized_cumulative_reward      = mean(normalized_cumulative_reward,      na.rm = TRUE),
+    best_reward                       = mean(best_reward,                       na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(normalized_cumulative_reward, best_reward,
+                        mean_normalized_cumulative_reward, mean_best_reward))
+
+dfmean$name = factor(dfmean$name, levels = facet_levels)
+
+ggplot(dfmean %>% filter(sample_noise == sam_noise, movement_noise == move_noise, n_agents == 5),
+       aes(x = comm_radius, y = value, color = model)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_wrap(vars(name)) +
+  geom_hline(data = df_random_5, aes(yintercept = value), color = "black", linetype = "dashed")
+
+ggplot(dfmean %>% filter(sample_noise == sam_noise, movement_noise == move_noise, n_agents == 10),
+       aes(x = comm_radius, y = value, color = model)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  facet_wrap(vars(name)) +
+  geom_hline(data = df_random_10, aes(yintercept = value), color = "black", linetype = "dashed")
+
+```
 

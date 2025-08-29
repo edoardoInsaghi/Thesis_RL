@@ -30,7 +30,6 @@ class EnvArgs2D:
 def reward_function_2d(amplitudes, freqs_x, freqs_y, phases, 
                        landscape_center, landscape_width, positions):
     
-    # Calculate dot product for each position and cosine component
     x = positions[:, 0].unsqueeze(1)
     y = positions[:, 1].unsqueeze(1)
     
@@ -38,17 +37,85 @@ def reward_function_2d(amplitudes, freqs_x, freqs_y, phases,
     dot_products = freqs_x * x + freqs_y * y
     cos_terms = amplitudes * torch.cos(dot_products + phases)
     
-    # Sum over all cosine components
     reward_sum = torch.sum(cos_terms, dim=1)
     
-    # Apply Gaussian envelope
+    # Gaussian envelope
     dist_sq = (x.squeeze() - landscape_center[0])**2 + (y.squeeze() - landscape_center[1])**2
     envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
     
     return torch.sigmoid(reward_sum) * envelope
 
 
+
+def reward_function_rastrigin(amplitudes, freqs_x, freqs_y, phases,
+                              landscape_center, landscape_width, positions):
+    """
+    Rastrigin-based reward, normalized with Gaussian envelope.
+    """
+    x = positions[:, 0]
+    y = positions[:, 1]
+    coords = torch.stack([x, y], dim=1)
+
+    A = 10
+    raw = A * coords.size(1) + torch.sum(coords**2 - A * torch.cos(2 * math.pi * coords), dim=1)
+    
+    # Invert so that center = max
+    values = -raw
+    
+    # Gaussian envelope
+    dist_sq = (x - landscape_center[0])**2 + (y - landscape_center[1])**2
+    envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
+
+    # Normalize via sigmoid
+    return torch.sigmoid(values) * envelope
+
+
+def reward_function_ackley(amplitudes, freqs_x, freqs_y, phases,
+                           landscape_center, landscape_width, positions):
+    """
+    Ackley-based reward, normalized with Gaussian envelope.
+    """
+    x = positions[:, 0]
+    y = positions[:, 1]
+    coords = torch.stack([x, y], dim=1)
+
+    d = coords.size(1)
+    sum_sq = torch.sum(coords**2, dim=1)
+    cos_term = torch.sum(torch.cos(2 * math.pi * coords), dim=1)
+
+    raw = -20 * torch.exp(-0.2 * torch.sqrt(sum_sq / d)) - torch.exp(cos_term / d) + 20 + math.e
+    
+    values = -raw  
+    
+    dist_sq = (x - landscape_center[0])**2 + (y - landscape_center[1])**2
+    envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
+    
+    return values * envelope
+
+
+def reward_function_sphere(amplitudes, freqs_x, freqs_y, phases,
+                           landscape_center, landscape_width, positions):
+    """
+    Sphere function (sum of squares), normalized with Gaussian envelope.
+    """
+    x = positions[:, 0]
+    y = positions[:, 1]
+    coords = torch.stack([x, y], dim=1)
+
+    raw = torch.sum(coords**2, dim=1)
+    values = -raw  # invert so that 0 (center) is maximum
+
+    dist_sq = (x - landscape_center[0])**2 + (y - landscape_center[1])**2
+    envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
+
+    return torch.sigmoid(values) * envelope
+
+
+
+
+
 class Environment2D:
+
     def __init__(self, args: EnvArgs2D):
         self.args = args
         self.n_actors = args.n_actors
@@ -77,6 +144,7 @@ class Environment2D:
         self.landscape_changed = True 
         self.connection_lines = [] 
 
+
     def _create_action_vectors(self, num_actions, velocity, angular_velocity):
         vectors = []
         for i in range(num_actions - 1):
@@ -88,6 +156,7 @@ class Environment2D:
         
         vectors.append([0.0, 0.0])
         return torch.tensor(vectors, dtype=torch.float32)
+
 
     def _init_landscape(self):
         self.amplitudes = torch.rand((self.args.cosines))
@@ -102,16 +171,16 @@ class Environment2D:
         ])
         self.landscape_width = torch.rand(1) * 10 + 10
 
+
     def reset(self):
-        # Reset positions
+
         mean_x, mean_y = self.args.starting_position_mean
         self.positions = torch.normal(
             mean=mean_x, 
             std=self.args.starting_position_var,
             size=(self.n_actors, 2)
         )
-        
-        # Reset directions to random orientations
+
         angles = torch.rand(self.n_actors) * 2 * math.pi
         self.directions = torch.stack([
             torch.cos(angles),
@@ -121,7 +190,7 @@ class Environment2D:
         self.time_elapsed = 0
         self.done = False
         self._init_landscape()
-        self.landscape_changed = True # Force to recumpute landscape
+        self.landscape_changed = True # Forces to recumpute landscape
         
         self.connection_lines = []
         

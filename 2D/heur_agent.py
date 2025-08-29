@@ -13,6 +13,7 @@ class RelativePSOMultiAgent:
         self.action_vectors = env.action_vectors
         self.comm_radius = comm_radius
         self.memory_size = memory_size
+        self.momentum_coeff = 0.7
         self.reset()
     
     def reset(self):
@@ -45,15 +46,17 @@ class RelativePSOMultiAgent:
             mem['displacements'] = mem['displacements'][-self.memory_size:]
     
 
-    def get_best_cognitive_direction(self, agent_idx, current_position, current_displacement):
+    def get_best_cognitive_direction(self, agent_idx):
         mem = self.cognitive_memory[agent_idx]
-        if not mem['positions']:
-            return torch.zeros(2)
         
         best_idx = torch.argmax(torch.tensor(mem['rewards'])).item()
         best_global_displacement = mem['displacements'][best_idx]
-        
+        current_displacement = self.cognitive_memory[agent_idx]['displacements'][-1]
         relative_position = best_global_displacement - current_displacement
+
+        #if agent_idx == 0:
+        #    print(f"Agent {agent_idx} \nbest global displacement: {best_global_displacement}, \
+        #                              \ncurrent displacement: {current_displacement}")  
         
         return relative_position
     
@@ -71,7 +74,7 @@ class RelativePSOMultiAgent:
             best_agent = -1
             for j in neighbors:
                 if self.cognitive_memory[j]['rewards']:
-                    neighbor_best_reward = max(self.cognitive_memory[j]['rewards'])
+                    #neighbor_best_reward = max(self.cognitive_memory[j]['rewards'])
                     neighbor_best_reward = self.cognitive_memory[j]['rewards'][-1]
 
                     if neighbor_best_reward > best_reward:
@@ -82,7 +85,7 @@ class RelativePSOMultiAgent:
                 continue
             
             best_idx = torch.argmax(torch.tensor(self.cognitive_memory[best_agent]['rewards'])).item()
-            best_position = self.cognitive_memory[best_agent]['positions'][best_idx]
+            #best_position = self.cognitive_memory[best_agent]['positions'][best_idx]
             best_position = self.cognitive_memory[best_agent]['positions'][-1]
             
             relative_position = best_position - positions[i]
@@ -91,41 +94,40 @@ class RelativePSOMultiAgent:
             self.social_best[i]['reward'] = best_reward
     
 
-    def compute_actions(self, positions):
+    def compute_actions(self):
         actions = torch.zeros(self.n_agents, dtype=torch.long)
         
         for i in range(self.n_agents):
-            cognitive_dir = self.get_best_cognitive_direction(i, positions[i], self.current_displacement[i])
             
+            cognitive_dir = self.get_best_cognitive_direction(i)
             social_dir = self.social_best[i]['relative_position']
+            momentum_dir = self.current_displacement[i]
             
             if torch.norm(cognitive_dir) < 1e-5 and torch.norm(social_dir) < 1e-5:
                 actions[i] = len(self.action_vectors) - 1  # Stand still
+                actions[i] = torch.randint(0, len(self.action_vectors) - 1, (1,)).item()
                 continue
             
             # Calculate adaptive weights
             cognitive_reward = max(self.cognitive_memory[i]['rewards']) if self.cognitive_memory[i]['rewards'] else 1e-5
             social_reward = self.social_best[i]['reward']
             
-            if cognitive_reward > 0 and social_reward > 0:
+            if social_reward > 0.0:
                 cognitive_weight = math.exp(cognitive_reward / (social_reward + cognitive_reward + 1e-8))
                 social_weight = math.exp(social_reward / (social_reward + cognitive_reward + 1e-8))
-                
-                total_weight = cognitive_weight + social_weight
-                cognitive_weight /= total_weight
-                social_weight /= total_weight
             else:
-                cognitive_weight = 0.5
-                social_weight = 0.5
-            
+                cognitive_weight = 1.0
+                social_weight = 0.0
+
             if torch.norm(cognitive_dir) > 1e-5:
                 cognitive_dir = cognitive_dir / torch.norm(cognitive_dir)
             if torch.norm(social_dir) > 1e-5:
                 social_dir = social_dir / torch.norm(social_dir)
+            if torch.norm(momentum_dir) > 1e-5:
+                momentum_dir = momentum_dir / torch.norm(momentum_dir)
             
-            desired_direction = (cognitive_weight * cognitive_dir + social_weight * social_dir)
-            #desired_direction = random.uniform(0, 1) * cognitive_dir + \
-            #                    random.uniform(0, 1) * social_dir
+            desired_direction = cognitive_weight * cognitive_dir + social_weight * social_dir
+            # desired_direction = self.momentum_coeff * momentum_dir + random.uniform(0, 1) * cognitive_dir + random.uniform(0, 1) * social_dir # Actual PSO
 
             if torch.norm(desired_direction) < 1e-5:
                 actions[i] = len(self.action_vectors) - 1 
@@ -137,6 +139,8 @@ class RelativePSOMultiAgent:
                 actions[i] = action_idx
         
         return actions
+
+
 
 def main_relative_pso():
 

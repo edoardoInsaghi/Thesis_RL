@@ -61,7 +61,7 @@ class PPO_Buffer:
             advantages.insert(0, gae)
         
         advantages = torch.stack(advantages)
-        self.returns = (advantages + values[:-5]).detach()
+        self.returns = (advantages + values[:-self.n_agents]).detach()
         self.advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8).detach()
     
     def compute_returns(self, last_values: torch.Tensor):
@@ -171,7 +171,7 @@ class Agent(nn.Module):
         
         if weights is not None:
             self.load_state_dict(torch.load(weights, map_location=device))
-            print(f"Weights loaded from {weights}")
+            # print(f"Weights loaded from {weights}")
         
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
         self.to(device)

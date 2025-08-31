@@ -232,7 +232,7 @@ def main_hybrid_evaluation(rl_weights_path,
 
 def main_evaluation_experiment(rl_weights_path):
 
-    model_name = "Best_RL_Improve_RL2"
+    model_name = "Best_RL_Improve_RL_NOCOG"
     results_path = Path(f"{model_name}_results.csv")
     if not results_path.exists():
         with open(results_path, 'w', newline='') as csvfile:
@@ -274,7 +274,7 @@ def main_evaluation_experiment(rl_weights_path):
 
 if __name__ == "__main__":
 
-    simple_play = True
+    simple_play = False
     if simple_play:
         main_hybrid_evaluation("weights/shared_agent_shared_network_10.pth", 
                             n_agents = 5,

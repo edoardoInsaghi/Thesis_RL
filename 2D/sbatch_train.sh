@@ -8,4 +8,4 @@
 #SBATCH --gpus=1
 
 source ~/Thesis_RL/venv/bin/activate
-python3 shared_main.py
+python3 shared_main2.py

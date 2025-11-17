@@ -14,6 +14,8 @@ class EnvArgs2D:
                  starting_position_mean: tuple = (0, 0),
                  starting_position_var: float = 10,
                  cosines: int = 10,
+                 circle_start: bool = False,
+                 circle_radius: float = 25.0,
                  num_actions: int = 9):  # 8 directions + stand still
         
         self.n_actors = n_actors
@@ -24,6 +26,8 @@ class EnvArgs2D:
         self.movement_noise = movement_noise
         self.max_steps = max_steps
         self.cosines = cosines
+        self.circle_start = circle_start
+        self.circle_radius = circle_radius
         self.num_actions = num_actions
 
 
@@ -44,71 +48,6 @@ def reward_function_2d(amplitudes, freqs_x, freqs_y, phases,
     envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
     
     return torch.sigmoid(reward_sum) * envelope
-
-
-
-def reward_function_rastrigin(amplitudes, freqs_x, freqs_y, phases,
-                              landscape_center, landscape_width, positions):
-    """
-    Rastrigin-based reward, normalized with Gaussian envelope.
-    """
-    x = positions[:, 0]
-    y = positions[:, 1]
-    coords = torch.stack([x, y], dim=1)
-
-    A = 10
-    raw = A * coords.size(1) + torch.sum(coords**2 - A * torch.cos(2 * math.pi * coords), dim=1)
-    
-    # Invert so that center = max
-    values = -raw
-    
-    # Gaussian envelope
-    dist_sq = (x - landscape_center[0])**2 + (y - landscape_center[1])**2
-    envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
-
-    # Normalize via sigmoid
-    return torch.sigmoid(values) * envelope
-
-
-def reward_function_ackley(amplitudes, freqs_x, freqs_y, phases,
-                           landscape_center, landscape_width, positions):
-    """
-    Ackley-based reward, normalized with Gaussian envelope.
-    """
-    x = positions[:, 0]
-    y = positions[:, 1]
-    coords = torch.stack([x, y], dim=1)
-
-    d = coords.size(1)
-    sum_sq = torch.sum(coords**2, dim=1)
-    cos_term = torch.sum(torch.cos(2 * math.pi * coords), dim=1)
-
-    raw = -20 * torch.exp(-0.2 * torch.sqrt(sum_sq / d)) - torch.exp(cos_term / d) + 20 + math.e
-    
-    values = -raw  
-    
-    dist_sq = (x - landscape_center[0])**2 + (y - landscape_center[1])**2
-    envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
-    
-    return values * envelope
-
-
-def reward_function_sphere(amplitudes, freqs_x, freqs_y, phases,
-                           landscape_center, landscape_width, positions):
-    """
-    Sphere function (sum of squares), normalized with Gaussian envelope.
-    """
-    x = positions[:, 0]
-    y = positions[:, 1]
-    coords = torch.stack([x, y], dim=1)
-
-    raw = torch.sum(coords**2, dim=1)
-    values = -raw  # invert so that 0 (center) is maximum
-
-    dist_sq = (x - landscape_center[0])**2 + (y - landscape_center[1])**2
-    envelope = torch.exp(-0.5 * dist_sq / (landscape_width**2))
-
-    return torch.sigmoid(values) * envelope
 
 
 
@@ -174,12 +113,19 @@ class Environment2D:
 
     def reset(self):
 
-        mean_x, mean_y = self.args.starting_position_mean
-        self.positions = torch.normal(
-            mean=mean_x, 
-            std=self.args.starting_position_var,
-            size=(self.n_actors, 2)
-        )
+        if self.args.circle_start:
+            angles = torch.linspace(0, 2 * math.pi, self.n_actors + 1)[:-1]  # even distribution
+            self.positions = torch.stack([
+                torch.cos(angles) * self.args.circle_radius,
+                torch.sin(angles) * self.args.circle_radius
+            ], dim=1)
+        else:
+            mean_x, mean_y = self.args.starting_position_mean
+            self.positions = torch.normal(
+                mean=mean_x, 
+                std=self.args.starting_position_var,
+                size=(self.n_actors, 2)
+            )
 
         angles = torch.rand(self.n_actors) * 2 * math.pi
         self.directions = torch.stack([
@@ -190,11 +136,12 @@ class Environment2D:
         self.time_elapsed = 0
         self.done = False
         self._init_landscape()
-        self.landscape_changed = True # Forces to recumpute landscape
+        self.landscape_changed = True # Forces to recumpute landscape, otherwise visualisation breaks
         
         self.connection_lines = []
         
         return self.positions.clone()
+    
 
     def step(self, action_indices: torch.Tensor):
         # Convert action indices to movement vectors

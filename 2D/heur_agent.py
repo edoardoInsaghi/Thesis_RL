@@ -127,7 +127,7 @@ class RelativePSOMultiAgent:
                 momentum_dir = momentum_dir / torch.norm(momentum_dir)
             
             desired_direction = cognitive_weight * cognitive_dir + social_weight * social_dir
-            desired_direction = social_weight * social_dir # No cognitivie component
+            # desired_direction = social_weight * social_dir # No cognitivie component
             # desired_direction = self.momentum_coeff * momentum_dir + random.uniform(0, 1) * cognitive_dir + random.uniform(0, 1) * social_dir # Actual PSO
 
             if torch.norm(desired_direction) < 1e-5:

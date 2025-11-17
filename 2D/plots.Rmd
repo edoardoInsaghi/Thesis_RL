@@ -1,93 +1,488 @@
 ```{r}
 library(dplyr)
-library(tidyverse)
+library(tidyr)
 library(ggplot2)
+library(zoo)
 
-data = read.csv("Best_RL_results.csv")
-data2 = read.csv("Heur_Only_results.csv")
-data3 = read.csv("Random_Baseline_results.csv")
-data4 =  read.csv("Best_RL_Improve_RL_results.csv")
-colnames(data)
+data10 = read.csv("10_temp_memory_RL_training_metrics.csv")
+data50 = read.csv("50_temp_memory_RL_training_metrics.csv")
+data100 = read.csv("100_temp_memory_RL_training_metrics.csv")
+
+dfrl = rbind(data10, data50, data100) %>%
+  filter(episode <= 10000) %>%
+  pivot_longer(
+    cols = c(normalized_cumulative_reward, best_reward, final_rewards,
+             mean_normalized_cumulative_reward, mean_best_reward, mean_final_rewards)
+  ) %>%
+  mutate(
+    metric = case_when(
+      name %in% c("best_reward", "mean_best_reward") ~ "Best Reward",
+      name %in% c("normalized_cumulative_reward", "mean_normalized_cumulative_reward") ~ "Cumulative Reward",
+      name %in% c("final_rewards", "mean_final_rewards") ~ "Final Rewards"
+    ),
+    type = case_when(
+      grepl("^mean", name) ~ "Mean of Swarm",
+      TRUE ~ "Best Agent"
+    )
+  )
+
+k = 200
+
+df_smoothed <- dfrl %>%
+  group_by(memory_size, name) %>%
+  arrange(episode) %>%
+  mutate(
+    roll_mean = rollapplyr(value, width = k, FUN = mean, fill = NA, align = "right"),
+    roll_q1 = rollapplyr(value, width = k, FUN = quantile, probs = 0.25, fill = NA, align = "right"),
+    roll_q3 = rollapplyr(value, width = k, FUN = quantile, probs = 0.75, fill = NA, align = "right")
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(roll_mean))
+
+ggplot(df_smoothed, aes(x = episode, color = as.factor(memory_size))) +
+  geom_line(aes(y = roll_mean)) +
+  geom_ribbon(aes(ymin = roll_q1, ymax = roll_q3, fill = as.factor(memory_size)), 
+              alpha = 0.3, color = NA) +
+  facet_grid(metric ~ type, scales = "free_y") +
+  labs(color = "Memory Size", fill = "Memory Size", y = "Reward Moving Average (200)", x = "Episode") +
+  theme_bw()  +
+  theme(
+    axis.title = element_text(size = 16),    
+    axis.text = element_text(size = 14),   
+    strip.text = element_text(size = 14),       
+    legend.title = element_text(size = 14),   
+    legend.text = element_text(size = 12),     
+  )
+
 ```
+
+
+
+
+
+
 ```{r}
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 
-sam_noise = 0.1
-move_noise = 0.1
+data     = read.csv("RL_Spherical_results.csv")
+data2    = read.csv("Heuristic_Spherical_results.csv")
+data3    = read.csv("Hybrid_Spherical_results.csv")
+data4    = read.csv("RL_Improve_Spherical_results.csv")
+datarand = read.csv("Random_Spherical_results.csv")
 
-df = rbind(data, data2, data4) %>%
-  pivot_longer(cols = c(normalized_cumulative_reward, best_reward,
-                        mean_normalized_cumulative_reward, mean_best_reward))
+sam_noise  = 0.01
+move_noise = 0.01
 
-df_random_5 = data3 %>% filter(n_agents==5) %>%
+facet_levels = c("normalized_cumulative_reward", 
+                 "best_reward",
+                 "final_rewards",
+                 "mean_normalized_cumulative_reward", 
+                 "mean_best_reward",
+                 "mean_final_rewards")
+
+df_s = rbind(data, data2, data3) %>%
+  pivot_longer(cols = c(normalized_cumulative_reward, best_reward, final_rewards,
+                        mean_normalized_cumulative_reward, mean_best_reward, mean_final_rewards))
+
+df_s$name = factor(df_s$name, levels = facet_levels)
+
+dfrand_q = datarand %>%
   summarise(
-    normalized_cumulative_reward      = mean(normalized_cumulative_reward,      na.rm = TRUE),
-    best_reward                       = mean(best_reward,                       na.rm = TRUE),
-    mean_normalized_cumulative_reward = mean(mean_normalized_cumulative_reward, na.rm = TRUE),
-    mean_best_reward                  = mean(mean_best_reward,                  na.rm = TRUE)
-  ) %>%
-  pivot_longer(everything(), names_to = "name", values_to = "value")
-  
-df_random_10 = data3 %>% filter(n_agents==10) %>%
-  summarise(
-    normalized_cumulative_reward      = mean(normalized_cumulative_reward,      na.rm = TRUE),
-    best_reward                       = mean(best_reward,                       na.rm = TRUE),
-    mean_normalized_cumulative_reward = mean(mean_normalized_cumulative_reward, na.rm = TRUE),
-    mean_best_reward                  = mean(mean_best_reward,                  na.rm = TRUE)
-  ) %>%
-  pivot_longer(everything(), names_to = "name", values_to = "value")
+    q1_norm       = quantile(normalized_cumulative_reward, 0.25, na.rm = TRUE),
+    med_norm      = quantile(normalized_cumulative_reward, 0.50, na.rm = TRUE),
+    q3_norm       = quantile(normalized_cumulative_reward, 0.75, na.rm = TRUE),
 
+    q1_best       = quantile(best_reward, 0.25, na.rm = TRUE),
+    med_best      = quantile(best_reward, 0.50, na.rm = TRUE),
+    q3_best       = quantile(best_reward, 0.75, na.rm = TRUE),
+    
+    q1_final       = quantile(final_rewards, 0.25, na.rm = TRUE),
+    med_final      = quantile(final_rewards, 0.50, na.rm = TRUE),
+    q3_final       = quantile(final_rewards, 0.75, na.rm = TRUE),
 
-facet_levels   = c("normalized_cumulative_reward", "best_reward",
-                  "mean_normalized_cumulative_reward", "mean_best_reward")
-df$name        = factor(df$name,        levels = facet_levels)
-df_random_5$name = factor(df_random_5$name, levels = facet_levels)
-df_random_10$name = factor(df_random_10$name, levels = facet_levels)
+    q1_mean_norm  = quantile(mean_normalized_cumulative_reward, 0.25, na.rm = TRUE),
+    med_mean_norm = quantile(mean_normalized_cumulative_reward, 0.50, na.rm = TRUE),
+    q3_mean_norm  = quantile(mean_normalized_cumulative_reward, 0.75, na.rm = TRUE),
 
-ggplot(df %>% filter(n_agents == 5, movement_noise == move_noise, sample_noise == sam_noise),
+    q1_mean_best  = quantile(mean_best_reward, 0.25, na.rm = TRUE),
+    med_mean_best = quantile(mean_best_reward, 0.50, na.rm = TRUE),
+    q3_mean_best  = quantile(mean_best_reward, 0.75, na.rm = TRUE),
+    
+    q1_mean_final       = quantile(mean_final_rewards, 0.25, na.rm = TRUE),
+    med_mean_final      = quantile(mean_final_rewards, 0.50, na.rm = TRUE),
+    q3_mean_final       = quantile(mean_final_rewards, 0.75, na.rm = TRUE)
+  )
+
+dfrand_long = dfrand_q %>%
+  pivot_longer(everything(),
+               names_to = c("stat", "name"),
+               names_pattern = "([^_]+)_(.*)",
+               values_to = "value") %>%
+  mutate(
+    name = recode(name,
+                  "norm"      = "normalized_cumulative_reward",
+                  "best"      = "best_reward",
+                  "final"     = "final_rewards",
+                  "mean_norm" = "mean_normalized_cumulative_reward",
+                  "mean_best" = "mean_best_reward",
+                  "mean_final"= "mean_final_rewards",),
+    
+    stat = recode(stat,
+                  "q1"  = "Q1",
+                  "med" = "Median",
+                  "q3"  = "Q3")
+  )
+
+dfrand_long$name <- factor(dfrand_long$name, levels = facet_levels)
+dfrand_long$name = recode(dfrand_long$name,
+                   "normalized_cumulative_reward"       = "Cumulative", 
+                   "best_reward"                        = "Best",
+                   "final_rewards"                      = "Final",
+                   "mean_normalized_cumulative_reward"  = "Mean Cumulative", 
+                   "mean_best_reward"                   = "Mean Best",
+                   "mean_final_rewards"                 = "Mean Final")
+
+df_s$model = recode(df_s$model,
+                     "RL_Spherical"        = "Reinforcement Learning",
+                     "Heuristic_Spherical" = "Heuristic Policy",
+                     "Hybrid_Spherical"    = "Hybrid Algorithm")
+
+df_s$name = recode(df_s$name,
+                   "normalized_cumulative_reward"       = "Cumulative", 
+                   "best_reward"                        = "Best",
+                   "final_rewards"                      = "Final",
+                   "mean_normalized_cumulative_reward"  = "Mean Cumulative", 
+                   "mean_best_reward"                   = "Mean Best",
+                   "mean_final_rewards"                 = "Mean Final")
+
+ggplot(df_s %>% filter(movement_noise == move_noise, sample_noise == sam_noise),
        aes(y = value, x = as.factor(comm_radius), fill = model)) +
   geom_boxplot() +
-  facet_wrap(vars(name)) +
-  geom_hline(data = df_random_5, aes(yintercept = value), color = "black", linetype = "dashed")
+  geom_hline(data = dfrand_long,
+             aes(yintercept = value, linetype = stat),
+             color = "red", size = 0.4) +
+  facet_wrap(vars(name), scales = "free_y") +
+  labs(fill = "Model", linetype = "Random Agent Quartiles", 
+       x = "Communication Radius Size", y = "Reward") + #, title = "Reward Metrics for Circular Initialization") +
+  scale_linetype_manual(values = c("Q1" = "dashed", 
+                                   "Median" = "solid", 
+                                   "Q3" = "dashed")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 20),    
+    axis.text = element_text(size = 16),   
+    strip.text = element_text(size = 16),       
+    legend.title = element_text(size = 16),   
+    legend.text = element_text(size = 14),     
+  )
 
-ggplot(df %>% filter(n_agents == 10, movement_noise == move_noise, sample_noise == sam_noise),
+
+
+df_avg = df_s %>%
+  group_by(sample_noise, name, model) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+ggplot(df_avg, aes(x = sample_noise, y = mean_value, color = model)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ name) +
+  labs(#title="Rewards under Sample Uncertainty (Circular Init)",
+       color = "Model", 
+       x = "Sample Noise", 
+       y = "Reward") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 20),    
+    axis.text = element_text(size = 16),   
+    strip.text = element_text(size = 16),       
+    legend.title = element_text(size = 16),   
+    legend.text = element_text(size = 14),     
+  )
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+data     = read.csv("RL_Random_results.csv")
+data2    = read.csv("Heuristic_Random_results.csv")
+data3    = read.csv("Hybrid_Random_results.csv")
+data4    = read.csv("RL_Improve_Random_results.csv")
+datarand = read.csv("Random_Random_results.csv")
+
+sam_noise  = 0.01
+move_noise = 0.01
+
+facet_levels = c("normalized_cumulative_reward", 
+                 "best_reward",
+                 "final_rewards",
+                 "mean_normalized_cumulative_reward", 
+                 "mean_best_reward",
+                 "mean_final_rewards")
+
+df_r = rbind(data, data2, data3) %>%
+  pivot_longer(cols = c(normalized_cumulative_reward, best_reward, final_rewards,
+                        mean_normalized_cumulative_reward, mean_best_reward, mean_final_rewards))
+
+df_r$name = factor(df_r$name, levels = facet_levels)
+
+dfrand_q = datarand %>%
+  summarise(
+    q1_norm       = quantile(normalized_cumulative_reward, 0.25, na.rm = TRUE),
+    med_norm      = quantile(normalized_cumulative_reward, 0.50, na.rm = TRUE),
+    q3_norm       = quantile(normalized_cumulative_reward, 0.75, na.rm = TRUE),
+
+    q1_best       = quantile(best_reward, 0.25, na.rm = TRUE),
+    med_best      = quantile(best_reward, 0.50, na.rm = TRUE),
+    q3_best       = quantile(best_reward, 0.75, na.rm = TRUE),
+    
+    q1_final       = quantile(final_rewards, 0.25, na.rm = TRUE),
+    med_final      = quantile(final_rewards, 0.50, na.rm = TRUE),
+    q3_final       = quantile(final_rewards, 0.75, na.rm = TRUE),
+
+    q1_mean_norm  = quantile(mean_normalized_cumulative_reward, 0.25, na.rm = TRUE),
+    med_mean_norm = quantile(mean_normalized_cumulative_reward, 0.50, na.rm = TRUE),
+    q3_mean_norm  = quantile(mean_normalized_cumulative_reward, 0.75, na.rm = TRUE),
+
+    q1_mean_best  = quantile(mean_best_reward, 0.25, na.rm = TRUE),
+    med_mean_best = quantile(mean_best_reward, 0.50, na.rm = TRUE),
+    q3_mean_best  = quantile(mean_best_reward, 0.75, na.rm = TRUE),
+    
+    q1_mean_final       = quantile(mean_final_rewards, 0.25, na.rm = TRUE),
+    med_mean_final      = quantile(mean_final_rewards, 0.50, na.rm = TRUE),
+    q3_mean_final       = quantile(mean_final_rewards, 0.75, na.rm = TRUE)
+  )
+
+dfrand_long = dfrand_q %>%
+  pivot_longer(everything(),
+               names_to = c("stat", "name"),
+               names_pattern = "([^_]+)_(.*)",
+               values_to = "value") %>%
+  mutate(
+    name = recode(name,
+                  "norm"      = "normalized_cumulative_reward",
+                  "best"      = "best_reward",
+                  "final"     = "final_rewards",
+                  "mean_norm" = "mean_normalized_cumulative_reward",
+                  "mean_best" = "mean_best_reward",
+                  "mean_final"= "mean_final_rewards",),
+    
+    stat = recode(stat,
+                  "q1"  = "Q1",
+                  "med" = "Median",
+                  "q3"  = "Q3")
+  )
+
+dfrand_long$name <- factor(dfrand_long$name, levels = facet_levels)
+dfrand_long$name = recode(dfrand_long$name,
+                   "normalized_cumulative_reward"       = "Cumulative", 
+                   "best_reward"                        = "Best",
+                   "final_rewards"                      = "Final",
+                   "mean_normalized_cumulative_reward"  = "Mean Cumulative", 
+                   "mean_best_reward"                   = "Mean Best",
+                   "mean_final_rewards"                 = "Mean Final")
+
+df_r$model = recode(df_r$model,
+                     "RL_Random"        = "Reinforcement Learning",
+                     "Heuristic_Random" = "Heuristic Policy",
+                     "Hybrid_Random"    = "Hybrid Algorithm")
+
+df_r$name = recode(df_r$name,
+                   "normalized_cumulative_reward"       = "Cumulative", 
+                   "best_reward"                        = "Best",
+                   "final_rewards"                      = "Final",
+                   "mean_normalized_cumulative_reward"  = "Mean Cumulative", 
+                   "mean_best_reward"                   = "Mean Best",
+                   "mean_final_rewards"                 = "Mean Final")
+
+ggplot(df_r %>% filter(movement_noise == move_noise, sample_noise == sam_noise),
        aes(y = value, x = as.factor(comm_radius), fill = model)) +
   geom_boxplot() +
-  facet_wrap(vars(name)) +
-  geom_hline(data = df_random_10, aes(yintercept = value), color = "black", linetype = "dashed")
+  geom_hline(data = dfrand_long,
+             aes(yintercept = value, linetype = stat),
+             color = "red", size = 0.4) +
+  facet_wrap(vars(name), scales = "free_y") +
+  labs(fill = "Model", linetype = "Random Agent Quartiles", 
+       x = "Communication Radius Size", y = "Reward") + #, title = "Reward Metrics for Random Initialization") +
+  scale_linetype_manual(values = c("Q1" = "dashed", 
+                                   "Median" = "solid", 
+                                   "Q3" = "dashed")) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 20),    
+    axis.text = element_text(size = 16),   
+    strip.text = element_text(size = 16),       
+    legend.title = element_text(size = 16),   
+    legend.text = element_text(size = 14),     
+  )
 
 
-dfmean = rbind(data, data2, data4) %>% 
-  group_by(n_agents, comm_radius, movement_noise, sample_noise, model) %>%
-  summarise(
-    mean_normalized_cumulative_reward = mean(mean_normalized_cumulative_reward, na.rm = TRUE),
-    mean_best_reward                  = mean(mean_best_reward,                  na.rm = TRUE),
-    normalized_cumulative_reward      = mean(normalized_cumulative_reward,      na.rm = TRUE),
-    best_reward                       = mean(best_reward,                       na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  pivot_longer(cols = c(normalized_cumulative_reward, best_reward,
-                        mean_normalized_cumulative_reward, mean_best_reward))
 
-dfmean$name = factor(dfmean$name, levels = facet_levels)
-
-ggplot(dfmean %>% filter(sample_noise == sam_noise, movement_noise == move_noise, n_agents == 5),
-       aes(x = comm_radius, y = value, color = model)) +
+df_avg = df_r %>%
+  group_by(sample_noise, name, model) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+ggplot(df_avg, aes(x = sample_noise, y = mean_value, color = model)) +
   geom_line() +
   geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  facet_wrap(vars(name)) +
-  geom_hline(data = df_random_5, aes(yintercept = value), color = "black", linetype = "dashed")
+  facet_wrap(~ name) +
+  labs(#title="Rewards under Sample Uncertainty (Random Init)",
+       color = "Model", 
+       x = "Sample Noise", 
+       y = "Reward") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 20),    
+    axis.text = element_text(size = 16),   
+    strip.text = element_text(size = 16),       
+    legend.title = element_text(size = 16),   
+    legend.text = element_text(size = 14),     
+  )
+```
 
-ggplot(dfmean %>% filter(sample_noise == sam_noise, movement_noise == move_noise, n_agents == 10),
-       aes(x = comm_radius, y = value, color = model)) +
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+df_avg <- df_r %>%
+  group_by(sample_noise, movement_noise, name, comm_radius, model) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+
+ggplot(df_avg %>% filter(comm_radius == 10), aes(x = as.factor(sample_noise), y = as.factor(movement_noise), fill = mean_value)) +
+  geom_tile(color = "black") +
+  scale_fill_viridis_c(option = "plasma") + 
+  facet_grid(name ~ model,
+             labeller = labeller(
+               name = c(
+                 "normalized_cumulative_reward" = "Cumulative",
+                 "best_reward" = "Best",
+                 "mean_normalized_cumulative_reward" = "Mean Cumulative",
+                 "mean_best_reward" = "Mean Best"
+               )
+             )) +
+  labs(fill = "Average Value",
+       x = "Sample Noise", 
+       y = "Movement Noise") +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+df_avg <- df_r %>%
+  group_by(sample_noise, movement_noise, name, comm_radius, model) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop")
+
+ggplot(df_avg %>% filter(comm_radius == 10), aes(x = as.factor(sample_noise), y = as.factor(movement_noise), fill = mean_value)) +
+  geom_tile(color = "black") +
+  scale_fill_viridis_c(option = "plasma") + 
+  facet_grid(name ~ model,
+             labeller = labeller(
+               name = c(
+                 "normalized_cumulative_reward" = "Cumulative",
+                 "best_reward" = "Best",
+                 "mean_normalized_cumulative_reward" = "Mean Cumulative",
+                 "mean_best_reward" = "Mean Best"
+               )
+             )) +
+  labs(fill = "Average Value",
+       x = "Sample Noise", 
+       y = "Movement Noise") +
+  theme_minimal()
+
+```
+
+
+
+
+```{r}
+
+ggplot(df_avg %>% filter(comm_radius == 10),
+       aes(x = sample_noise,
+           y = mean_value,
+           color = model,
+           group = model)) +
   geom_line() +
   geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  facet_wrap(vars(name)) +
-  geom_hline(data = df_random_10, aes(yintercept = value), color = "black", linetype = "dashed")
+  scale_y_continuous(limits = c(0, 1)) +   # keep values on [0,1]
+  facet_wrap(vars(name, movement_noise),
+             ncol = 4,
+             labeller = labeller(
+               name = c(
+                 "normalized_cumulative_reward" = "Cumulative Reward",
+                 "best_reward" = "Best",
+                 "mean_normalized_cumulative_reward" = "Mean Cumulative Reward",
+                 "mean_best_reward" = "Mean Best"
+               )
+             )) +
+  labs(color = "Model",
+       x = "Sample Noise",
+       y = "Average Value") +
+  theme_minimal(base_size = 14)
 
+ggplot(df_avg %>% filter(comm_radius == 30),
+       aes(x = sample_noise, y = movement_noise, fill = mean_value)) +
+  geom_tile() +
+  geom_contour(aes(z = mean_value, color = model), bins = 5) +
+  facet_wrap(~ name, labeller = label_wrap_gen()) +
+  scale_fill_viridis_c(limits = c(0, 1)) +
+  labs(fill = "Average Value",
+       x = "Sample Noise", 
+       y = "Movement Noise") +
+  theme_minimal(base_size = 14)
+
+ggplot(df_avg %>% filter(comm_radius == 30),
+       aes(x = sample_noise, y = mean_value, color = as.factor(movement_noise))) +
+  geom_line(aes(group = interaction(model, movement_noise)), alpha = 0.7) +
+  geom_point() +
+  facet_wrap(~ name) +
+  labs(color = "Movement Noise", 
+       x = "Sample Noise", 
+       y = "Average Value") +
+  theme_minimal(base_size = 14)
+
+ggplot(df_avg %>% filter(comm_radius == 30, name == "normalized_cumulative_reward"),
+       aes(x = sample_noise, y = mean_value, color = model)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ as.factor(movement_noise)) +
+  labs(color = "Movement Noise", 
+       x = "Sample Noise", 
+       y = "Average Value") +
+  theme_minimal(base_size = 14)
+
+unique(df_avg$name)
 ```
 

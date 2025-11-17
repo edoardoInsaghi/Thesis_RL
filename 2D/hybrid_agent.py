@@ -9,6 +9,7 @@ from environment import EnvArgs2D, Environment2D
 from shared_agent import Agent
 from shared_net import NNDICT
 from heur_agent import RelativePSOMultiAgent, compute_graph
+import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -104,11 +105,12 @@ class HybridAgent:
         reward_improved = self.last_rewards > self.prev_rewards
 
         # Combine actions: use RL when alone OR when best in neighborhood
-        use_rl = (~self.has_neighbor.any(dim=1)) | self.is_best | reward_improved
-        #use_rl = torch.zeros_like(use_rl, dtype=torch.bool) # For testing heuristic only agent
+        use_rl = (~self.has_neighbor.any(dim=1)) | self.is_best #| reward_improved
+        # use_rl = torch.zeros_like(use_rl, dtype=torch.bool) # For testing heuristic only agent
+        # use_rl = torch.ones_like(use_rl, dtype=torch.bool) # For testing RL only agent
         actions = torch.where(use_rl, rl_actions, heur_actions)
-        
         # actions = torch.randint(0, self.env.args.num_actions, (self.n_agents,)) # For testing random agent
+
         new_positions, rewards, done = self.env.step(actions)
         sampled_rewards = rewards.clone() + torch.randn_like(rewards) * self.sample_noise
         
@@ -135,7 +137,8 @@ def main_hybrid_evaluation(rl_weights_path,
                            render = False,
                            model_name = None, 
                            max_steps = 250,
-                           num_episodes = 100):
+                           num_episodes = 100,
+                           circle_start = False):
                     
     n_agents = n_agents
     comm_radius = comm_radius
@@ -152,7 +155,8 @@ def main_hybrid_evaluation(rl_weights_path,
         max_steps=max_steps,
         starting_position_mean=(0, 0),
         starting_position_var=15,
-        num_actions=9
+        num_actions=9,
+        circle_start=circle_start
     )
     env = Environment2D(env_args)
     hybrid_agent = HybridAgent(env, rl_weights_path, comm_radius, sample_noise)
@@ -162,9 +166,9 @@ def main_hybrid_evaluation(rl_weights_path,
         results_path = Path(f"{model_name}_results.csv")
         assert results_path.exists(), f"Results file {results_path} does not exist"
     
-    pbar = trange(num_episodes, desc=f"Running {num_episodes} episodes", unit="episode")
+    #pbar = trange(num_episodes, desc=f"Running {num_episodes} episodes", unit="episode")
 
-    for episode in pbar:
+    for episode in range(num_episodes):
         positions = hybrid_agent.reset()
         cumulative_rewards = torch.zeros(n_agents)
         best_reward = torch.zeros_like(cumulative_rewards)
@@ -230,9 +234,9 @@ def main_hybrid_evaluation(rl_weights_path,
 
 
 
-def main_evaluation_experiment(rl_weights_path):
+def main_evaluation_experiment(rl_weights_path, circle_start):
 
-    model_name = "Best_RL_Improve_RL_NOCOG"
+    model_name = "RL_Improve_Random"
     results_path = Path(f"{model_name}_results.csv")
     if not results_path.exists():
         with open(results_path, 'w', newline='') as csvfile:
@@ -251,10 +255,10 @@ def main_evaluation_experiment(rl_weights_path):
                              'model'])
         print(f"Created file {results_path}")
 
-    for n_agents in [5, 10]: #, 15]:
-        for comm_radius in [0.0, 10.0, 20.0, 50.0]:
-            for movement_noise in [0.01, 0.05, 0.1]:
-                for sample_noise in [0.01, 0.05, 0.1]:
+    for n_agents in [5]: #, 10, 15]:
+        for comm_radius in [10.0, 30.0, 50.0]:
+            for movement_noise in [0.01, 0.05, 0.1, 0.2]:
+                for sample_noise in [0.01, 0.05, 0.1, 0.2]:
 
                     print(f"Running evaluation with n_agents={n_agents}, "
                           f"comm_radius={comm_radius}, "
@@ -269,21 +273,75 @@ def main_evaluation_experiment(rl_weights_path):
                         sample_noise=sample_noise,
                         render=False,
                         model_name=model_name,
+                        num_episodes=200,
+                        max_steps=200,
+                        circle_start=circle_start
                     )
+
+def randomized_evaluation_experiment(rl_weights_path, 
+                                     n_rounds=20000, 
+                                     n_agents=5):
+
+    model_name = "RL_Randomized"
+    results_path = Path(f"{model_name}_results.csv")
+
+    if not results_path.exists():
+        with open(results_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([
+                'episode',
+                'normalized_cumulative_reward',
+                'final_rewards',
+                'best_reward',
+                'mean_normalized_cumulative_reward',
+                'mean_final_rewards',
+                'mean_best_reward',
+                'n_agents',
+                'comm_radius',
+                'movement_noise',
+                'sample_noise',
+                'model'
+            ])
+        print(f"Created file {results_path}")
+
+    pbar = trange(n_rounds, desc=f"Running {n_rounds} episodes", unit="episode")
+    for i in pbar:
+        movement_noise = np.random.uniform(0.0, 0.2)
+        sample_noise = np.random.uniform(0.0, 0.2)
+        comm_radius = np.random.uniform(0.0, 50.0)
+        circle_start = True if i % 2 == 0 else False
+
+        main_hybrid_evaluation(
+            rl_weights_path=rl_weights_path,
+            n_agents=n_agents,
+            comm_radius=comm_radius,
+            movement_noise=movement_noise,
+            sample_noise=sample_noise,
+            render=False,
+            model_name=model_name,
+            num_episodes=1,
+            max_steps=200,
+            circle_start=circle_start
+        )
+
 
 
 if __name__ == "__main__":
 
-    simple_play = False
+    simple_play = True
     if simple_play:
         main_hybrid_evaluation("weights/shared_agent_shared_network_10.pth", 
-                            n_agents = 5,
-                            comm_radius = 30.0,
-                            movement_noise = 0.01,
-                            sample_noise = 0.01,
-                            render = True,
-                            model_name = None, 
-                            max_steps = 250,
-                            num_episodes = 100)
+                               n_agents = 5,
+                               comm_radius = 20.0,
+                               movement_noise = 0.01,
+                               sample_noise = 0.01,
+                               render = True,
+                               model_name = None, 
+                               max_steps = 1000,
+                               num_episodes = 100,
+                               circle_start = False)
     else:
-        main_evaluation_experiment("weights/shared_agent_shared_network_10.pth")
+        # main_evaluation_experiment("weights/shared_agent_shared_network_10.pth", circle_start = False)
+        randomized_evaluation_experiment("weights/shared_agent_shared_network_10.pth", 
+                                         n_rounds=20000,
+                                         n_agents=5)

@@ -8,7 +8,6 @@ from tqdm import trange
 from environment import EnvArgs2D, Environment2D
 from shared_agent import Agent, PPO_Buffer
 
-# Device selection
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -60,7 +59,9 @@ def main_training_loop(simple_play=False):
         max_steps=256,
         starting_position_mean=(0, 0),
         starting_position_var=10,
-        num_actions=9                     )
+        num_actions=9,
+        circle_start=True
+        )
     env = Environment2D(args)
 
     shared_agent = Agent(
@@ -69,6 +70,7 @@ def main_training_loop(simple_play=False):
         num_actions=args.num_actions,
         n_agents=n_agents,
         device=device,
+        weights=f"weights/shared_agent_shared_network_{temp_memory}.pth"
     )
     shared_buffer = PPO_Buffer(
         gamma=0.95,
@@ -160,4 +162,4 @@ def main_training_loop(simple_play=False):
 
 if __name__ == "__main__":
 
-    main_training_loop(simple_play=False)
+    main_training_loop(simple_play=True)
